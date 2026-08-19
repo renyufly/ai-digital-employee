@@ -73,7 +73,7 @@
 LLM_PROVIDER=openrouter
 OPENROUTER_API_KEY=
 LLM_BASE_URL=https://openrouter.ai/api/v1
-LLM_MODEL=
+LLM_MODEL=openai/gpt-5-mini
 LLM_TEMPERATURE=0
 LLM_PARALLEL_TOOL_CALLS=false
 OPENROUTER_HTTP_REFERER=http://localhost:8501
@@ -84,7 +84,7 @@ OPENROUTER_APP_TITLE=AI Digital Employee Demo
 
 #### 2.2.3 OpenRouter 模型需要单独选定并验证
 
-OpenRouter 是统一路由层，不等于某个固定模型。`LLM_MODEL` 必须填写 OpenRouter 的完整模型 ID（通常为 `provider/model`），并满足：
+OpenRouter 是统一路由层，不等于某个固定模型。本项目初始 Demo 已选定 `openai/gpt-5-mini`，但应用代码仍必须从 `LLM_MODEL` 读取，不能硬编码。该模型配置必须满足：
 
 - 支持 `tools` / Tool Calling；
 - 能稳定返回 OpenAI 兼容的 assistant tool-call message；
@@ -92,7 +92,7 @@ OpenRouter 是统一路由层，不等于某个固定模型。`LLM_MODEL` 必须
 - 价格、延迟和可用性符合演示要求；
 - 首选非推理或低推理配置，并使用 `temperature=0` 或模型允许的最低值。
 
-不要把 OpenRouter 的 `auto` 路由或免费模型作为面试演示的唯一方案，因为底层模型或可用性可能变化。选定模型后应固定完整模型 ID，并用三个核心问题做真实冒烟测试。可通过 OpenRouter Models API 的 `supported_parameters=tools` 过滤候选模型；模型名和价格可能变化，最终实现和演示前都应再次核对。
+初始 Demo 允许 OpenRouter 在上游 Provider 间自动路由，不固定某个上游 Provider；不主动启用 prompt logging，暂不强制 ZDR。架构应预留后续传入 Provider 与隐私路由选项的位置，但 Phase 5 第一版不增加这些配置的复杂逻辑。不要把 `auto` 模型或免费模型作为唯一方案；固定 `openai/gpt-5-mini` 完整模型 ID，并用三个核心问题做真实冒烟测试。可通过 OpenRouter Models API 的 `supported_parameters=tools` 核对能力；模型名、价格和能力可能变化，演示前应再次核对。
 
 #### 2.2.4 RAG 缺少索引生命周期设计
 
@@ -981,7 +981,7 @@ README 中只需说明 TTS 输出可作为数字人服务输入。不要为了�
 LLM_PROVIDER=openrouter
 OPENROUTER_API_KEY=
 LLM_BASE_URL=https://openrouter.ai/api/v1
-LLM_MODEL=
+LLM_MODEL=openai/gpt-5-mini
 LLM_TEMPERATURE=0
 LLM_PARALLEL_TOOL_CALLS=false
 LLM_TIMEOUT_SECONDS=60
@@ -998,7 +998,7 @@ VECTOR_DB_PATH=./data/vector_store
 CHUNK_SIZE=500
 CHUNK_OVERLAP=80
 RAG_TOP_K=3
-RAG_SCORE_THRESHOLD=
+RAG_SCORE_THRESHOLD=0.45
 
 # Mock ERP / RPA
 MOCK_ERP_URL=http://localhost:8001

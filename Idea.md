@@ -1124,7 +1124,7 @@ README 中说明：
 LLM_PROVIDER=openrouter
 OPENROUTER_API_KEY=
 LLM_BASE_URL=https://openrouter.ai/api/v1
-LLM_MODEL=
+LLM_MODEL=openai/gpt-5-mini
 LLM_TEMPERATURE=0
 LLM_PARALLEL_TOOL_CALLS=false
 LLM_TIMEOUT_SECONDS=60
@@ -1135,20 +1135,22 @@ LLM_MAX_OUTPUT_TOKENS=1000
 OPENROUTER_HTTP_REFERER=http://localhost:8501
 OPENROUTER_APP_TITLE=AI Digital Employee Demo
 
-EMBEDDING_MODEL=
+EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5
+EMBEDDING_CACHE_DIR=./.model-cache
 
 MOCK_ERP_URL=http://localhost:8001
 MOCK_ERP_USERNAME=admin
 MOCK_ERP_PASSWORD=admin123
 
 VECTOR_DB_PATH=./data/vector_store
+RAG_SCORE_THRESHOLD=0.45
 
 RPA_HEADLESS=false
 
 MAX_AGENT_STEPS=5
 ```
 
-其中 `OPENROUTER_API_KEY` 和 `LLM_MODEL` 为必填项；`OPENROUTER_HTTP_REFERER` 与 `OPENROUTER_APP_TITLE` 为可选归因信息。API Key 只放在本机 `.env` 或部署平台的 Secret 中，`.env.example` 保持空值并提交到仓库，真实 `.env` 不提交。`LLM_MODEL` 应在开发前从 OpenRouter 模型列表中选择支持 Tool Calling 的完整模型 ID，并用三个核心 Demo 问题做真实冒烟测试。
+其中 `OPENROUTER_API_KEY` 和 `LLM_MODEL` 为必填项；初始 Demo 使用 `openai/gpt-5-mini`，但应用代码必须从环境变量读取模型 ID，不能硬编码。允许 OpenRouter 自动选择上游 Provider，不主动启用 prompt logging，暂不强制 ZDR；后续可在 LLM Client 配置层增加 Provider 和隐私路由选项。`OPENROUTER_HTTP_REFERER` 与 `OPENROUTER_APP_TITLE` 为可选归因信息。API Key 只放在本机 `.env` 或部署平台的 Secret 中，`.env.example` 保持空 Key 并提交到仓库，真实 `.env` 不提交。上线 LLM 阶段后应用三个核心 Demo 问题做真实冒烟测试。
 
 禁止：
 

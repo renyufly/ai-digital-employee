@@ -114,10 +114,15 @@ def test_registry_rejects_non_string_tool_name() -> None:
 def test_registry_exposes_only_explicit_tool_schemas() -> None:
     schemas = tool_schemas()
 
-    assert set(TOOL_REGISTRY) == {"calculate", "query_order"}
+    assert set(TOOL_REGISTRY) == {
+        "calculate",
+        "query_order",
+        "search_company_docs",
+    }
     assert [schema["function"]["name"] for schema in schemas] == [
         "calculate",
         "query_order",
+        "search_company_docs",
     ]
     for schema in schemas:
         parameters = schema["function"]["parameters"]

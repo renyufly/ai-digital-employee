@@ -6,6 +6,7 @@
 .uv-cache/
 .uv-python/
 .playwright-browsers/
+.model-cache/
 
 # Python artifacts
 __pycache__/

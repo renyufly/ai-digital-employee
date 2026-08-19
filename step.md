@@ -308,3 +308,105 @@ $env:PLAYWRIGHT_BROWSERS_PATH = (Join-Path (Get-Location) '.playwright-browsers'
 - 当前进度：Phase 3 已完整验收；Calculator 与订单 RPA 已能通过统一 Registry 安全分发，并可生成后续 LLM Tool Calling 所需的 JSON Schema。
 - 下一阶段：严格按照 `plan.md` 进入 Phase 4（RAG 离线索引），届时才创建模拟企业 PDF、Loader、Splitter、Embedding、FAISS、metadata/manifest 和知识库 Tool。
 - 尚未开始：RAG、`search_company_docs`、LLM Client、Agent Loop、Chat API、Streamlit、TTS 与 Docker。
+
+## Phase 4 - 已实现
+
+- 阶段：Phase 4（RAG 离线索引）
+- 状态：已完成
+- 完成日期：2026-08-19
+- 累计进度：Phase 0、Phase 1、Phase 2、Phase 3、Phase 4 已完成；下一阶段为 Phase 5（LLM Client 与 Agent Loop）。
+- 范围控制：本次只实现本地模拟 PDF、文本提取、切块、本地 BGE Embedding、FAISS 持久化、检索与知识库 Tool；没有实现或调用 OpenRouter、LLM Client、Agent Loop、Chat API、前端或 TTS。
+
+## Phase 4 实施过程
+
+1. 完整核对 `plan.md` 的 Phase 4 目标、步骤、检索策略、验收问题和测试要求，并参考 `Idea.md` 中企业知识库、退款政策、物流政策和来源展示的项目背景。
+2. 延续项目内环境隔离规则：Python 使用 `.uv-python/` 中的 CPython 3.11.14，依赖只通过本地 uv 安装到 `.venv/`，uv 缓存继续固定在 `.uv-cache/`；没有修改全局 Python 或全局包。
+3. 在 `requirements.txt` 中增加本阶段依赖：`pypdf`、`reportlab`、`sentence-transformers` 和 `faiss-cpu`。实际环境使用 pypdf 5.9.0、reportlab 4.5.1、sentence-transformers 5.7.0、faiss-cpu 1.15.0 和 CPU 版 torch 2.13.0。
+4. 将 BGE 模型缓存固定在项目内 `.model-cache/` 并加入 `.gitignore`。首次下载的 `BAAI/bge-small-zh-v1.5` 缓存约 96.4 MB；后续加载优先使用 `local_files_only=True`，缓存完整时不会向 Hugging Face 发网络请求。
+5. 创建四份 1 页、可提取中文文本的模拟 PDF：`company_intro.pdf`、`refund_policy.pdf`、`shipping_policy.pdf` 和 `product_manual.pdf`。内容明确标记为 Demo 模拟数据，覆盖公司成立时间、退款时效、已发货退货条件、超过 30 天边界、默认物流公司和 A100 产品说明。
+6. 使用嵌入式 TrueType 中文字体生成 PDF。最初验证发现 CID 字体生成的 PDF 在终端显示存在编码歧义，因此改为嵌入 TrueType 字体，并通过 Unicode code point 和固定中文断言确认 pypdf 实际提取内容正确；第一版未引入 OCR。
+7. 创建 PDF Loader，按文件名和页码确定性加载；保留文件、从 1 开始的页码和正文，空页会记录 warning，无 PDF 或所有页面为空时返回明确错误。
+8. 创建中文感知的递归字符 Splitter，优先按段落、换行、句号、感叹号、问号、分号、逗号切分，最后才按字符截断；使用配置中的 `CHUNK_SIZE=500` 和 `CHUNK_OVERLAP=80`，并生成稳定的 `<file>-p<page>-c<index>` ID。
+9. 创建本地 BGE Embedding 封装：文档与查询都输出 float32 归一化向量；查询加入 BGE 检索指令。模型按需加载，非 RAG 命令不会提前加载 torch 或模型权重。
+10. 创建 FAISS `IndexFlatIP` 向量索引，归一化后使用内积表示余弦相似度。索引写入 `data/vector_store/index.faiss`，顺序完全对应的来源写入 `metadata.json`。
+11. 创建 `manifest.json`，记录格式版本、UTC 构建时间、Embedding 模型名、512 维向量、向量数量、切块参数，以及四份 PDF 的文件名、SHA-256 和大小。加载时严格校验 FAISS 数量、metadata 数量、manifest 数量和维度一致。
+12. 创建 `scripts/build_index.py` 作为手动离线构建入口；索引不在后端启动时自动重建。缺少完整索引时返回 `RAG_NOT_READY` 并提示先运行构建脚本，索引损坏或模型不一致时也拒绝继续检索。
+13. 创建 `KnowledgeRetriever` 和 `search_company_docs`。Tool 只返回 query、检索上下文和 `Source`，不额外调用 LLM；来源包含文件、页码、稳定 chunk ID、原文和相似度。默认 Retriever 被进程内复用，避免每次 Tool 调用重新加载本地模型。
+14. 将 `search_company_docs` 注册到现有白名单 Tool Registry，新增严格 Pydantic 参数模型；同步检索通过 `asyncio.to_thread` 接入异步 Tool 调度，不阻塞事件循环。
+15. 使用真实 BGE 对五个固定问题观察分数：四个相关问题第一名为 0.4676 至 0.7024，无关年假问题第一名为 0.3686。基于当前固定模型和模拟文档，将初始 `RAG_SCORE_THRESHOLD` 设为 0.45，并保留环境变量覆盖能力。
+16. 按已确认的 OpenRouter 决策同步配置示例和文档：Provider 为 OpenRouter、示例模型为 `openai/gpt-5-mini`、允许上游自动路由、API Key 字段保持为空、应用代码中的模型默认值保持空字符串并要求未来从 `LLM_MODEL` 加载。本阶段没有创建 `.env`，也没有调用 OpenRouter。
+17. 新增单元测试与真实模型集成测试，覆盖 PDF 中文文本、页码、切块边界、稳定 chunk ID、索引重载、manifest、数量不一致、缺失索引、四个相关问题和无关问题拒答；同时完成此前健康检查、ERP、RPA、Calculator 和 Tool Registry 的完整回归。
+
+## Phase 4 项目内环境与运行命令
+
+安装依赖，Python 下载与 uv 缓存都保留在项目目录：
+
+```powershell
+$env:UV_CACHE_DIR = (Join-Path (Get-Location) '.uv-cache')
+$env:UV_PYTHON_INSTALL_DIR = (Join-Path (Get-Location) '.uv-python')
+uv pip install --python .venv\Scripts\python.exe -r requirements.txt
+```
+
+重新生成四份模拟知识库 PDF：
+
+```powershell
+.venv\Scripts\python.exe scripts\create_knowledge_pdfs.py
+```
+
+如果当前系统没有脚本支持的中文字体，可通过 `KNOWLEDGE_PDF_FONT` 指定本机 TrueType/OpenType 中文字体；已提交的 PDF 可直接使用，不需要每次重新生成。
+
+首次下载本地 BGE 模型并构建索引，模型缓存与索引都只写入项目目录：
+
+```powershell
+.venv\Scripts\python.exe scripts\build_index.py
+```
+
+默认运行不加载真实模型和浏览器的快速测试：
+
+```powershell
+.venv\Scripts\python.exe -m pytest -q
+```
+
+运行包含真实 BGE、FAISS、Mock ERP 和项目内 Chromium 的完整回归：
+
+```powershell
+$env:PLAYWRIGHT_BROWSERS_PATH = (Join-Path (Get-Location) '.playwright-browsers')
+.venv\Scripts\python.exe -m pytest -q --run-integration
+```
+
+## Phase 4 验收结果
+
+| 验收项 | 结果 | 证据 |
+| --- | --- | --- |
+| 四份模拟 PDF | 通过 | 四份 PDF 均为 1 页文本型 PDF，pypdf 可提取完整中文和页码 |
+| Loader 与 Splitter | 通过 | 空页保护、语义分隔、500/80 配置、非空 chunk 和稳定 ID 均有测试 |
+| 本地 Embedding | 通过 | BAAI/bge-small-zh-v1.5 在项目缓存加载，输出 512 维归一化向量 |
+| FAISS 持久化 | 通过 | `index.faiss` 可重载，向量、metadata、manifest 数量和维度一致 |
+| 退款到账问题 | 通过 | `refund_policy.pdf` 第一名，score=0.6544 |
+| 已发货退款问题 | 通过 | `refund_policy.pdf` 第一名，score=0.7024 |
+| 默认物流公司问题 | 通过 | `shipping_policy.pdf` 第一名，score=0.5597 |
+| 公司成立时间问题 | 通过 | `company_intro.pdf` 第一名，score=0.4676 |
+| 无关年假问题 | 通过 | 第一名原始 score=0.3686，低于 0.45，返回 `NO_RELEVANT_DOCUMENT` |
+| Tool Registry | 通过 | Schema 只暴露 `calculate`、`query_order`、`search_company_docs` 三个白名单 Tool |
+| 默认自动测试 | 通过 | `47 passed, 4 skipped`；跳过项为显式集成测试 |
+| 完整集成回归 | 通过 | `51 passed`，真实 BGE/FAISS 与真实 Mock ERP/Chromium 全部通过 |
+| Python 编译检查 | 通过 | `python -m compileall -q app mock_erp scripts tests` 成功 |
+| 密钥与环境检查 | 通过 | `.env` 不存在且未被 Git 跟踪，`.env.example` 中 `OPENROUTER_API_KEY` 为空 |
+| Git 补丁格式检查 | 通过 | `git diff --check` 无空白错误 |
+
+## Phase 4 产物
+
+- 模拟知识库：`knowledge/company_intro.pdf`、`knowledge/refund_policy.pdf`、`knowledge/shipping_policy.pdf`、`knowledge/product_manual.pdf`
+- PDF 生成与索引命令：`scripts/create_knowledge_pdfs.py`、`scripts/build_index.py`
+- RAG 实现：`app/rag/models.py`、`loader.py`、`splitter.py`、`embeddings.py`、`indexer.py`、`vector_store.py`、`retriever.py`
+- 知识库 Tool：`app/tools/knowledge.py` 与更新后的 `app/agent/tool_registry.py`
+- 配置与依赖：`.env.example`、`.gitignore`、`requirements.txt`、`app/core/config.py`
+- 自动测试：`tests/test_rag.py`、`tests/integration/test_rag_real.py` 及更新后的 Registry 测试
+- 运行时生成但不提交：`.model-cache/`、`data/vector_store/`
+
+## 当前进度与下一阶段边界
+
+- 当前进度：Phase 4 已完整验收；三个 Agent Tool 均已实现并注册，RAG 可以在不调用 LLM 的情况下返回可追踪上下文和来源。
+- 下一阶段：严格按照 `plan.md` 进入 Phase 5（LLM Client 与 Agent Loop），届时才使用本机 `.env` 中的 `OPENROUTER_API_KEY` 和 `LLM_MODEL=openai/gpt-5-mini` 调用 OpenRouter。
+- Phase 5 的既定路由边界：允许 OpenRouter 自动选择上游 Provider；初始 Demo 不固定上游 Provider、不主动启用 prompt logging、不强制 ZDR，但 LLM Client 应保留未来增加 Provider/隐私路由选项的配置入口。
+- 尚未开始：OpenRouter LLM Client、Agent Loop、Chat API、Streamlit、TTS 与 Docker。
