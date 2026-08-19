@@ -8,7 +8,7 @@
 
 - Python
 - FastAPI
-- GPT-4o / OpenAI API
+- OpenRouter API / 可配置 LLM
 - LLM Tool Calling / Function Calling
 - Agent
 - RAG
@@ -54,7 +54,7 @@ Vector Search
 ↓
 获取 Top-K 文档 Chunk
 ↓
-GPT-4o
+OpenRouter LLM
 ↓
 生成回答
 ↓
@@ -159,7 +159,7 @@ LLM 最终生成自然语言回答：
 ```text
 用户
 ↓
-GPT-4o Agent
+OpenRouter LLM Agent
 ↓
 识别需要订单信息
 ↓
@@ -177,7 +177,7 @@ RAG 检索退款政策
 ↓
 获得相关文档 Chunk
 ↓
-GPT-4o 综合两个 Tool 的结果
+OpenRouter LLM 综合两个 Tool 的结果
 ↓
 生成最终回答
 ↓
@@ -222,7 +222,7 @@ TTS
                                │
                                ↓
                       ┌──────────────────┐
-                      │   GPT-4o Agent    │
+                      │ OpenRouter Agent  │
                       │ Tool Selection    │
                       └────────┬─────────┘
                                │
@@ -238,7 +238,7 @@ TTS
                               │
                               ↓
                      ┌─────────────────┐
-                     │     GPT-4o      │
+                     │ OpenRouter LLM  │
                      │ Final Response  │
                      └────────┬────────┘
                               │
@@ -268,16 +268,18 @@ Uvicorn
 LLM：
 
 ```text
-OpenAI API
-GPT-4o
+OpenRouter API
+支持 Tool Calling 的可配置模型
 Tool Calling / Function Calling
 ```
+
+调用层使用 `openai` Python SDK，并将 `base_url` 指向 `https://openrouter.ai/api/v1`。`LLM_MODEL` 必须填写 OpenRouter 完整模型 ID（通常为 `provider/model`），且所选模型必须支持 `tools`。面试演示固定一个经过验证的模型，不依赖 `auto` 路由或免费模型作为唯一方案。条件式多工具场景优先设置 `parallel_tool_calls=false`，让 Agent 先查订单，再根据订单状态决定是否检索政策。
 
 RAG：
 
 ```text
-OpenAI Embeddings
-FAISS 或 Chroma
+本地 BGE 中文 Embedding
+FAISS
 PyPDF / pypdf
 可选 LangChain
 ```
@@ -320,7 +322,7 @@ Streamlit
 TTS：
 
 ```text
-OpenAI TTS 或其他 TTS API
+edge-tts 或其他独立 TTS Provider
 ```
 
 部署：
@@ -620,7 +622,7 @@ Top-K Chunks
 ↓
 Prompt
 ↓
-GPT-4o
+OpenRouter LLM
 ↓
 Answer
 ```
@@ -729,7 +731,7 @@ calculate(expression: str)
 ```text
 User Message
 ↓
-Send message + tools to GPT-4o
+Send message + tools to OpenRouter LLM
 ↓
 模型判断是否调用 Tool
 ↓
@@ -738,7 +740,7 @@ Send message + tools to GPT-4o
     ↓
     获取结果
     ↓
-    将 Tool Result 返回 GPT-4o
+    将 Tool Result 返回 OpenRouter LLM
     ↓
     再次判断是否需要 Tool
 ↓
@@ -836,7 +838,7 @@ search_company_docs(
 )
 
 Step 4
-GPT-4o 综合结果
+OpenRouter LLM 综合结果
 
 Step 5
 输出最终回答
@@ -1119,9 +1121,19 @@ README 中说明：
 `.env.example`：
 
 ```env
-OPENAI_API_KEY=
+LLM_PROVIDER=openrouter
+OPENROUTER_API_KEY=
+LLM_BASE_URL=https://openrouter.ai/api/v1
+LLM_MODEL=
+LLM_TEMPERATURE=0
+LLM_PARALLEL_TOOL_CALLS=false
+LLM_TIMEOUT_SECONDS=60
+LLM_MAX_RETRIES=1
+LLM_MAX_OUTPUT_TOKENS=1000
 
-OPENAI_MODEL=gpt-4o
+# 可选：用于 OpenRouter 应用归因，不参与鉴权
+OPENROUTER_HTTP_REFERER=http://localhost:8501
+OPENROUTER_APP_TITLE=AI Digital Employee Demo
 
 EMBEDDING_MODEL=
 
@@ -1135,6 +1147,8 @@ RPA_HEADLESS=false
 
 MAX_AGENT_STEPS=5
 ```
+
+其中 `OPENROUTER_API_KEY` 和 `LLM_MODEL` 为必填项；`OPENROUTER_HTTP_REFERER` 与 `OPENROUTER_APP_TITLE` 为可选归因信息。API Key 只放在本机 `.env` 或部署平台的 Secret 中，`.env.example` 保持空值并提交到仓库，真实 `.env` 不提交。`LLM_MODEL` 应在开发前从 OpenRouter 模型列表中选择支持 Tool Calling 的完整模型 ID，并用三个核心 Demo 问题做真实冒烟测试。
 
 禁止：
 
@@ -1172,7 +1186,7 @@ message
 项目至少处理以下错误：
 
 ```text
-OpenAI API 调用失败
+OpenRouter API 调用失败、鉴权失败或余额不足
 Tool 调用失败
 订单不存在
 ERP 登录失败
@@ -1655,7 +1669,7 @@ headless=False
 展示：
 
 ```text
-GPT-4o
+OpenRouter LLM
 ↓
 query_order
 ↓
@@ -1665,7 +1679,7 @@ search_company_docs
 ↓
 RAG
 ↓
-GPT-4o
+OpenRouter LLM
 ↓
 Final Answer
 ↓
@@ -1742,7 +1756,7 @@ Enterprise AI Digital Employee
 简历描述：
 
 ```text
-基于 Python、FastAPI 与 GPT-4o 开发企业 AI 数字员工 Demo，
+基于 Python、FastAPI 与 OpenRouter 开发企业 AI 数字员工 Demo，
 设计 LLM Tool Calling Agent，实现企业知识库查询、订单系统操作
 和计算工具的动态选择与多步骤调用。
 
@@ -1766,7 +1780,7 @@ Enterprise AI Digital Employee
 -  ERP 支持订单查询
 -  Playwright 可以自动登录 ERP
 -  Playwright 可以查询指定订单
--  GPT-4o 可以正常对话
+-  通过 OpenRouter 选定的模型可以正常对话并稳定调用 Tool
 -  Agent 支持 Tool Calling
 -  Agent 支持 query_order
 -  Agent 支持 search_company_docs
@@ -1802,7 +1816,7 @@ Enterprise AI Digital Employee
 2. 创建 Mock ERP
 3. 创建 SQLite Mock Data
 4. 完成 Playwright query_order
-5. 创建 GPT-4o Client
+5. 创建 OpenRouter LLM Client
 6. 实现三个 Agent Tools
 7. 实现 RAG
 8. 实现 Agent Tool Calling Loop

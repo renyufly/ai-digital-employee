@@ -23,7 +23,7 @@
 
 1. 保留四个核心亮点：RAG、Tool Calling、Playwright RPA、多工具调用。
 2. 使用简单的自写 Agent Loop，不引入 LangChain、LangGraph 或多 Agent 框架。
-3. 使用 DeepSeek 的 OpenAI 兼容接口，并将模型调用封装为可替换 Provider。
+3. 使用 OpenRouter 的 OpenAI 兼容接口统一调用 LLM，并将具体模型保留为可配置项。
 4. Embedding 默认在本地运行，避免额外 API 费用。
 5. Mock ERP 使用 FastAPI + Jinja2 + Python 内置 `sqlite3`，第一版不引入 SQLAlchemy。
 6. 前后端只采用普通 HTTP 请求，不做 WebSocket、SSE 和流式输出。
@@ -67,29 +67,32 @@
 
 #### 2.2.2 模型供应商被写死
 
-原文大量使用 `GPT-4o` 和 `OPENAI_API_KEY`。这会造成成本和迁移限制。应改为通用配置：
+原文大量使用 `GPT-4o` 和 `OPENAI_API_KEY`，后续方案又一度写死为 DeepSeek。当前决策是统一通过 OpenRouter 调用 LLM，配置改为：
 
 ```env
-LLM_PROVIDER=deepseek
-LLM_API_KEY=
-LLM_BASE_URL=https://api.deepseek.com
-LLM_MODEL=deepseek-v4-flash
+LLM_PROVIDER=openrouter
+OPENROUTER_API_KEY=
+LLM_BASE_URL=https://openrouter.ai/api/v1
+LLM_MODEL=
 LLM_TEMPERATURE=0
+LLM_PARALLEL_TOOL_CALLS=false
+OPENROUTER_HTTP_REFERER=http://localhost:8501
+OPENROUTER_APP_TITLE=AI Digital Employee Demo
 ```
 
-业务代码只依赖 `LLMClient`，不直接依赖某个具体模型名称。后续换 OpenAI 或其他 OpenAI 兼容 API 时，只改配置和少量适配代码。
+业务代码只依赖 `LLMClient`，不直接依赖某个具体模型名称。`OPENROUTER_API_KEY` 是必需的秘密配置；`HTTP-Referer` 和 `X-OpenRouter-Title` 对本地调用不是鉴权必需项，但建议配置，便于 OpenRouter 归因和识别应用。以后切换模型时只修改 `LLM_MODEL`，不修改 Agent 业务代码。
 
-#### 2.2.3 DeepSeek 当前模型名需要更新
+#### 2.2.3 OpenRouter 模型需要单独选定并验证
 
-截至 2026-08-19，DeepSeek 官方文档将 `deepseek-chat` 标记为已弃用兼容名，当前模型为 `deepseek-v4-flash` 和 `deepseek-v4-pro`。本项目默认采用：
+OpenRouter 是统一路由层，不等于某个固定模型。`LLM_MODEL` 必须填写 OpenRouter 的完整模型 ID（通常为 `provider/model`），并满足：
 
-- `deepseek-v4-flash`；
-- 非思考模式；
-- `temperature=0` 或模型允许的最低值；
-- 普通 Tool Calls，不使用 beta strict mode；
-- 不使用思考模式，避免额外上下文处理和成本。
+- 支持 `tools` / Tool Calling；
+- 能稳定返回 OpenAI 兼容的 assistant tool-call message；
+- 支持项目所需的上下文长度；
+- 价格、延迟和可用性符合演示要求；
+- 首选非推理或低推理配置，并使用 `temperature=0` 或模型允许的最低值。
 
-原因：本项目的任务是稳定选择三个简单工具，不需要复杂推理模型。官方文档显示该模型支持 Tool Calls，且接口兼容 OpenAI SDK。模型名和价格可能变化，因此最终实现时应再次核对官方文档。
+不要把 OpenRouter 的 `auto` 路由或免费模型作为面试演示的唯一方案，因为底层模型或可用性可能变化。选定模型后应固定完整模型 ID，并用三个核心问题做真实冒烟测试。可通过 OpenRouter Models API 的 `supported_parameters=tools` 过滤候选模型；模型名和价格可能变化，最终实现和演示前都应再次核对。
 
 #### 2.2.4 RAG 缺少索引生命周期设计
 
@@ -154,7 +157,7 @@ ChatResponse
 
 - 纯函数和工具测试不调用 LLM；
 - Agent Loop 使用假的 LLM 响应测试；
-- 真实 DeepSeek 只保留少量手工冒烟测试；
+- 真实 OpenRouter 调用只保留少量手工冒烟测试；
 - Playwright 完整浏览器测试可以标记为 integration。
 
 #### 2.2.9 成本和密钥管理需要更明确
@@ -204,7 +207,7 @@ ChatResponse
 - Playwright 能查询存在和不存在的订单；
 - 本地 PDF 能构建索引并检索来源；
 - Calculator 安全计算四则运算和括号；
-- DeepSeek 能选择三种工具；
+- 通过 OpenRouter 选定的模型能稳定选择三种工具；
 - Agent 能完成 RPA + RAG 的多步调用；
 - FastAPI 提供 `/health` 和 `/api/chat`；
 - Streamlit 展示聊天、工具轨迹和来源；
@@ -247,7 +250,7 @@ ChatResponse
 ┌────────────────────────────────────────────────────────────┐
 │ FastAPI Backend :8000                                     │
 │                                                            │
-│ Chat API -> AgentService -> LLMClient (DeepSeek)           │
+│ Chat API -> AgentService -> LLMClient (OpenRouter)         │
 │                   │                                        │
 │                   ├── search_company_docs                  │
 │                   │      -> Retriever -> FAISS + metadata  │
@@ -306,8 +309,9 @@ knowledge/*.pdf
 | 配置 | pydantic-settings + `.env` | 配置集中且易解释 |
 | Mock ERP | FastAPI + Jinja2 + sqlite3 | 依赖少、实现直观 |
 | RPA | Playwright async API | 等待机制和现代浏览器支持好 |
-| LLM SDK | `openai` Python SDK | DeepSeek 提供兼容接口，未来易切换 |
-| 默认 LLM | `deepseek-v4-flash` 非思考模式 | 成本低，支持 Tool Calls |
+| LLM 网关 | OpenRouter | 用一个 API Key 和统一端点访问多个模型 |
+| LLM SDK | `openai` Python SDK | 指向 OpenRouter 的 OpenAI 兼容接口，代码简单且易替换 |
+| 默认 LLM | 由 `LLM_MODEL` 指定 | 必须使用支持 Tool Calling 的完整 OpenRouter 模型 ID |
 | PDF | pypdf | 足够处理自制的文本型 PDF |
 | Embedding | `BAAI/bge-small-zh-v1.5` | 本地、中文、体积较小、无需按次付费 |
 | 向量检索 | FAISS CPU | 小型本地项目简单直接 |
@@ -327,7 +331,7 @@ knowledge/*.pdf
 
 默认只有 LLM 对话产生 API 费用：
 
-- LLM：DeepSeek 低价模型；
+- LLM：OpenRouter 按所选模型计费；模型价格与路由策略在演示前确认；
 - Embedding：本地模型，零调用费用；
 - 向量库：本地 FAISS，零服务费用；
 - ERP：本地模拟系统；
@@ -688,9 +692,10 @@ request_id: str
 #### 具体步骤
 
 1. 创建 `LLMClient`，配置 API Key、base URL、model、timeout 和最大重试次数。
-2. 使用 OpenAI SDK 调用 DeepSeek 兼容接口，业务层不直接初始化 SDK Client。
-3. 将 Tool Registry 转换为 API 需要的工具 JSON Schema。
-4. 编写简洁 system prompt，说明：
+2. 使用 OpenAI SDK 调用 OpenRouter 的 OpenAI 兼容接口，业务层不直接初始化 SDK Client。
+3. 启动或首次调用时校验 `OPENROUTER_API_KEY` 和 `LLM_MODEL` 非空；模型 ID 不合法或不支持 Tool Calling 时给出明确配置错误。
+4. 将 Tool Registry 转换为 API 需要的工具 JSON Schema。综合条件问题默认设置 `parallel_tool_calls=false`，引导模型先查订单事实，再决定是否查政策；若所选模型不支持该参数，则依靠 prompt 和 Agent Loop 保证顺序。
+5. 编写简洁 system prompt，说明：
    - 政策问题调用知识库；
    - 订单事实必须调用 ERP；
    - 数学问题调用 calculator；
@@ -698,16 +703,18 @@ request_id: str
    - 来源不足要说明无法确认；
    - 条件问题先查条件再决定下一步；
    - 回答用中文并保持简洁。
-5. Agent Loop 的单轮流程：发送 messages 和 tools，读取 assistant message。
-6. 若无 tool calls，返回最终答案。
-7. 若有 tool calls，先把完整 assistant tool-call message 加入历史。
-8. 对每个 Tool Call：解析 JSON、校验输入、执行工具、序列化 ToolResult，并以对应 `tool_call_id` 回传。
-9. 将工具来源累积到最终 `sources`，按 `file + page + chunk_id` 去重。
-10. 将每一步转换为安全、简短的 AgentTrace。
-11. 最多执行 `MAX_AGENT_STEPS=5`；超限时返回可理解错误。
-12. 记录已经执行的 `tool_name + normalized_arguments`；相同调用重复出现时阻止死循环。
-13. LLM 网络错误只做 1 至 2 次短重试；Tool 本身不要被 Agent 无限制重试。
-14. 对最终答案为空、返回未知工具或参数 JSON 错误分别处理。
+6. Agent Loop 的单轮流程：发送 messages 和 tools，读取 assistant message。
+7. 若无 tool calls，返回最终答案。
+8. 若有 tool calls，先把完整 assistant tool-call message 加入历史。
+9. 对每个 Tool Call：解析 JSON、校验输入、执行工具、序列化 ToolResult，并以对应 `tool_call_id` 回传。
+10. 将工具来源累积到最终 `sources`，按 `file + page + chunk_id` 去重。
+11. 将每一步转换为安全、简短的 AgentTrace。
+12. 最多执行 `MAX_AGENT_STEPS=5`；超限时返回可理解错误。
+13. 记录已经执行的 `tool_name + normalized_arguments`；相同调用重复出现时阻止死循环。
+14. LLM 网络错误只做 1 至 2 次短重试；Tool 本身不要被 Agent 无限制重试。
+15. 分别映射 OpenRouter 的鉴权失败、余额不足、限流、上游 Provider 错误和超时；只对限流、临时上游错误和网络错误做有限重试。
+16. 对最终答案为空、返回未知工具或参数 JSON 错误分别处理。
+17. 记录请求耗时、响应中的模型名和 token usage；不得记录 API Key、Authorization header 或完整业务 prompt。
 
 #### 多工具场景的预期流程
 
@@ -740,7 +747,7 @@ request_id: str
 
 - 用 Fake LLM 构造“直接回答、单工具、多工具、错误参数、重复工具、超限”响应；
 - Tool Registry 使用假的工具函数，测试消息循环而不是外部系统；
-- 真实 DeepSeek 只做手工或可选 integration test，避免每次测试付费和波动。
+- 真实 OpenRouter 只做手工或可选 integration test，避免每次测试付费和波动。
 
 #### 需要理解
 
@@ -860,7 +867,7 @@ README 中只需说明 TTS 输出可作为数字人服务输入。不要为了�
 2. RAG 集成测试：真实小索引和固定问题，不调用 LLM。
 3. RPA 集成测试：真实 Mock ERP + headless Chromium。
 4. API 测试：依赖注入 Fake Agent，验证请求响应。
-5. 手工端到端测试：真实 DeepSeek + ERP + RAG + Streamlit。
+5. 手工端到端测试：真实 OpenRouter 模型 + ERP + RAG + Streamlit。
 
 #### 必测清单
 
@@ -950,7 +957,7 @@ README 中只需说明 TTS 输出可作为数字人服务输入。不要为了�
 建议完成 P0 后使用如下表述：
 
 ```text
-基于 FastAPI 与 DeepSeek Tool Calling 实现企业 AI 助手，
+基于 FastAPI 与 OpenRouter Tool Calling 实现企业 AI 助手，
 设计可解释的 Agent Loop，支持知识库检索、ERP 查询和安全计算工具的动态选择与多步调用。
 
 使用 pypdf、中文 Embedding 与 FAISS 构建本地 RAG，
@@ -971,13 +978,17 @@ README 中只需说明 TTS 输出可作为数字人服务输入。不要为了�
 
 ```env
 # LLM
-LLM_PROVIDER=deepseek
-LLM_API_KEY=
-LLM_BASE_URL=https://api.deepseek.com
-LLM_MODEL=deepseek-v4-flash
+LLM_PROVIDER=openrouter
+OPENROUTER_API_KEY=
+LLM_BASE_URL=https://openrouter.ai/api/v1
+LLM_MODEL=
 LLM_TEMPERATURE=0
+LLM_PARALLEL_TOOL_CALLS=false
 LLM_TIMEOUT_SECONDS=60
 LLM_MAX_RETRIES=1
+LLM_MAX_OUTPUT_TOKENS=1000
+OPENROUTER_HTTP_REFERER=http://localhost:8501
+OPENROUTER_APP_TITLE=AI Digital Employee Demo
 MAX_AGENT_STEPS=5
 
 # RAG
@@ -1093,7 +1104,7 @@ AUDIO_DIR=./data/audio
 - ERP 关闭；
 - 向量索引缺失；
 - 问知识库中没有的内容；
-- DeepSeek Key 无效；
+- OpenRouter API Key 无效或账户余额不足；
 - Calculator 恶意表达式；
 - Agent 重复调用同一工具。
 
@@ -1125,9 +1136,9 @@ AUDIO_DIR=./data/audio
 
 以下选型在真正开始对应阶段前应再次核对版本：
 
-- DeepSeek OpenAI 兼容调用说明：<https://api-docs.deepseek.com/guides/function_calling/>
-- DeepSeek Tool Calls：<https://api-docs.deepseek.com/guides/tool_calls/>
-- DeepSeek 模型与价格：<https://api-docs.deepseek.com/quick_start/pricing/>
+- OpenRouter Quickstart 与 OpenAI SDK 兼容调用：<https://openrouter.ai/docs/quickstart>
+- OpenRouter Tool Calling：<https://openrouter.ai/docs/guides/features/tool-calling>
+- OpenRouter 模型列表与能力过滤：<https://openrouter.ai/docs/guides/overview/models>
 - BGE 中文 Embedding 模型卡：<https://huggingface.co/BAAI/bge-small-zh-v1.5>
 - Sentence Transformers 语义检索说明：<https://www.sbert.net/examples/sentence_transformer/applications/semantic-search/README.html>
 - edge-tts 项目：<https://github.com/rany2/edge-tts>
@@ -1141,7 +1152,7 @@ AUDIO_DIR=./data/audio
 本项目的最佳实现路线不是把原 README 的所有条目全部做完，而是先完成一条稳定、可解释的端到端链路：
 
 ```text
-DeepSeek Tool Calling
+OpenRouter Tool Calling
   + 本地中文 RAG / FAISS
   + Playwright Mock ERP
   + 安全 Calculator
