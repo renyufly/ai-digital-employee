@@ -410,3 +410,116 @@ $env:PLAYWRIGHT_BROWSERS_PATH = (Join-Path (Get-Location) '.playwright-browsers'
 - 下一阶段：严格按照 `plan.md` 进入 Phase 5（LLM Client 与 Agent Loop），届时才使用本机 `.env` 中的 `OPENROUTER_API_KEY` 和 `LLM_MODEL=openai/gpt-5-mini` 调用 OpenRouter。
 - Phase 5 的既定路由边界：允许 OpenRouter 自动选择上游 Provider；初始 Demo 不固定上游 Provider、不主动启用 prompt logging、不强制 ZDR，但 LLM Client 应保留未来增加 Provider/隐私路由选项的配置入口。
 - 尚未开始：OpenRouter LLM Client、Agent Loop、Chat API、Streamlit、TTS 与 Docker。
+
+## Phase 5 - 已完整验收
+
+- 阶段：Phase 5（LLM Client 与 Agent Loop）
+- 状态：已完成，包括真实 OpenRouter、RAG、Calculator、RPA 与条件式多工具场景联调。
+- 完成日期：2026-08-19
+- 累计进度：Phase 0 至 Phase 5 已完整验收；下一阶段为 Phase 6（FastAPI Chat API）。
+- 范围控制：本次只实现 OpenRouter LLM Client、自写 Agent Loop、Prompt、错误映射、Fake LLM 自动测试和手工冒烟脚本；没有提前实现 Chat API、Streamlit、TTS 或 Docker。
+
+## Phase 5 实施过程
+
+1. 完整核对 `plan.md` 的 Phase 5 目标、17 项具体步骤、多工具预期流程、验收项和 Fake LLM 测试要求，并参考 `Idea.md` 中企业政策、ERP、Calculator 和条件式多工具场景的业务背景。
+2. 延续项目内环境隔离规则：Python 使用 `.uv-python/` 中的 CPython 3.11.14，依赖只通过本地 uv 安装到 `.venv/`，uv 缓存固定在 `.uv-cache/`；没有修改全局 Python、全局包或系统浏览器版本。
+3. 在 `requirements.txt` 中增加 `openai` 1.x SDK，并补齐 `plan.md` 固定测试选型中此前遗漏的 `pytest-asyncio`；实际项目环境安装 `openai==1.109.1`、`pytest-asyncio==1.4.0`，相关传递依赖也只进入项目 `.venv/`。
+4. 初次根据 OpenRouter 模型目录选择 `qwen/qwen3-next-80b-a3b-instruct:free`，真实联调时收到 HTTP 404。进一步核对发现该型号已标记弃用并于 2026-07-19 下线，因此改用当前仍活跃、免费且支持 `tools` 的固定模型 `openai/gpt-oss-20b:free`；同时保留 `openai/gpt-5-mini` 作为免费端点波动或限流时的稳定回退提示。
+5. 没有使用 `openrouter/free` 或 `openrouter/auto` 随机路由作为模型 ID。`LLMClient` 要求 `LLM_MODEL` 为固定的 `provider/model` 完整 ID，允许固定模型的 `:free` 后缀，并拒绝空值、`auto` 和免费随机路由，符合计划中“模型可配置但不能硬编码随机模型”的边界。
+6. 创建 `app/llm/client.py`，业务层只依赖统一的 `LLMClient.complete()`。SDK Client 的 API Key、base URL、model、timeout、最大重试、temperature、最大输出 token、`parallel_tool_calls=false` 及 OpenRouter 可选归因请求头全部来自集中配置。
+7. OpenAI SDK 自带重试被关闭，由项目代码只对限流、网络错误、超时和上游 5xx 做 `LLM_MAX_RETRIES` 控制的短重试，避免 SDK 与业务层叠加重试。鉴权失败、余额/免费额度不足、模型或 Tool Calling 不支持、普通 API 错误和空响应均映射为明确且不泄密的错误码与中文消息。
+8. `LLMClient` 将 OpenAI SDK 响应归一化为 `LLMResponse` 和 `LLMToolCall`，Agent 业务代码不直接依赖 SDK 的复杂响应类型；成功日志只记录耗时、实际响应模型名和 token usage，不记录 API Key、Authorization Header 或完整 Prompt。
+9. 创建独立 `app/agent/prompts.py`，system prompt 明确政策调用知识库、订单事实调用 ERP、数学问题调用 Calculator、工具失败不得编造、资料不足明确无法确认、条件问题先确认条件后调用后续工具，并要求简洁中文回答。
+10. 创建不依赖 LangChain/LangGraph 的 `AgentService`：每轮把完整 messages 和 Tool Registry Schema 交给 LLM；有 Tool Call 时先追加完整 assistant tool-call message，再以对应 `tool_call_id` 追加序列化后的 `ToolResult`；无 Tool Call 时返回最终答案。
+11. Tool 参数先进行 JSON 对象解析，再交给现有 Tool Registry 的严格 Pydantic 白名单校验；错误 JSON 转为 `INVALID_ARGUMENT` ToolResult，未知工具转为 `UNKNOWN_TOOL`，两者都会回传模型以生成可理解回答，不动态执行任意名称。
+12. Agent 记录 `tool_name + 规范化 JSON 参数`，参数字段顺序和空格不同仍视为相同调用；重复调用立即返回 `REPEATED_TOOL_CALL`，避免模型在工具失败后死循环。执行轮数由 `MAX_AGENT_STEPS` 限制，超限返回 `MAX_AGENT_STEPS_EXCEEDED`。
+13. 新增 `AgentTrace` 和 Phase 5 内部 `AgentResult` 契约。Trace 只展示轮次、类型、工具名、安全摘要和耗时，不包含完整参数、业务 Prompt、ERP 密码或 API Key；Phase 6 的 HTTP 层可直接据此组装最终 `ChatResponse`。
+14. Tool 返回的 RAG 来源按 `file + page + chunk_id` 累积去重。即使同一来源在不同检索结果或 Tool Call 中重复出现，Agent 最终只返回一份可追踪来源。
+15. 新增 `tests/test_agent.py`，使用 Fake LLM 和 Fake Dispatcher 覆盖直接回答、单工具消息协议、条件式两工具调用、来源去重、错误 JSON、重复工具调用、最大轮数和未知工具，不依赖真实 OpenRouter、BGE、ERP 或浏览器。
+16. 新增 `tests/test_llm_client.py`，覆盖缺失 API Key、随机模型 ID 拒绝、固定免费模型 ID、Tool Call 响应归一化、token usage、模型参数、最大输出 token 和 `parallel_tool_calls=false`。
+17. 新增 `scripts/smoke_agent.py`，提供退款政策、Calculator、订单查询和条件式多工具四个真实模型问题。该脚本只读取本机 `.env`，不接受代码内硬编码 Key，也不会将 Key 写入日志。
+18. 完成默认快速回归、包含真实本地 BGE/FAISS 与项目内 Chromium 的完整集成回归、Python 编译检查及 Git 补丁格式检查。
+
+## API Key 手动填写位置
+
+在项目根目录从 `.env.example` 复制一份名为 `.env` 的本机文件，只填写下面字段：
+
+```env
+OPENROUTER_API_KEY=你的_OpenRouter_API_Key
+LLM_MODEL=openai/gpt-oss-20b:free
+```
+
+`.env` 已在 `.gitignore` 中，禁止提交。不要把真实 Key 填入 `.env.example`、Python 文件、`step.md` 或终端命令历史。如果固定免费模型当时限流或下线，可只在本机 `.env` 将模型改为：
+
+```env
+LLM_MODEL=openai/gpt-5-mini
+```
+
+## Phase 5 项目内环境与运行命令
+
+只向项目虚拟环境安装依赖：
+
+```powershell
+$env:UV_CACHE_DIR = (Join-Path (Get-Location) '.uv-cache')
+$env:UV_PYTHON_INSTALL_DIR = (Join-Path (Get-Location) '.uv-python')
+uv pip install --python .venv\Scripts\python.exe -r requirements.txt
+```
+
+默认运行 Fake LLM 和其他快速测试，不会调用 OpenRouter：
+
+```powershell
+.venv\Scripts\python.exe -m pytest -q
+```
+
+运行包含真实 BGE、FAISS、Mock ERP 和项目内 Chromium 的完整本地回归，仍不会调用 OpenRouter：
+
+```powershell
+$env:PLAYWRIGHT_BROWSERS_PATH = (Join-Path (Get-Location) '.playwright-browsers')
+$env:HF_HUB_OFFLINE = '1'
+.venv\Scripts\python.exe -m pytest -q --run-integration
+```
+
+手填 `.env` 后，先启动 Mock ERP，再在另一个终端执行真实 OpenRouter 冒烟测试：
+
+```powershell
+.venv\Scripts\python.exe -m uvicorn mock_erp.app:app --port 8001
+.venv\Scripts\python.exe scripts\smoke_agent.py
+```
+
+## Phase 5 验收结果
+
+| 验收项 | 结果 | 证据 |
+| --- | --- | --- |
+| LLM 配置隔离 | 通过 | Client 从集中配置读取 Key、base URL、model、timeout 和重试；业务层不初始化 SDK |
+| 固定免费模型 | 通过 | 默认 `openai/gpt-oss-20b:free`，完整 ID 且支持 tools；拒绝 `auto`/随机免费路由 |
+| 顺序工具调用 | 通过 | 默认 `parallel_tool_calls=false`，Prompt 明确条件问题先查事实再决定后续工具 |
+| 单工具消息循环 | 通过 | Fake LLM 验证 assistant tool_calls 与对应 `tool_call_id` ToolResult 完整回传 |
+| 条件式多工具 | 通过 | Fake LLM 依次执行 `query_order`、`search_company_docs` 后生成最终回答 |
+| Calculator 选择链路 | 通过 | Tool Schema 包含 Calculator，Fake Client 验证 Tool Call 归一化和 Agent 分发协议 |
+| 来源累计去重 | 通过 | 相同 `file + page + chunk_id` 来源只保留一份 |
+| 错误参数与未知工具 | 通过 | 均转为统一 ToolResult 回传模型，不产生未处理异常或任意执行 |
+| 重复调用保护 | 通过 | 规范化参数后识别重复调用，返回 `REPEATED_TOOL_CALL` |
+| 最大轮数保护 | 通过 | 达到配置上限返回 `MAX_AGENT_STEPS_EXCEEDED` 和可理解中文提示 |
+| LLM 错误映射 | 通过 | 鉴权、余额、限流、超时、网络、模型不支持、上游 5xx 和普通 API 错误均有明确映射 |
+| 默认自动测试 | 通过 | `60 passed, 4 skipped`；跳过项仅为显式本地集成测试 |
+| 完整本地集成回归 | 通过 | `64 passed`，真实 BGE/FAISS、Uvicorn Mock ERP 和项目内 headless Chromium 全部正常 |
+| Python 编译检查 | 通过 | `python -m compileall -q app mock_erp scripts tests` 成功 |
+| Git 补丁格式检查 | 通过 | `git diff --check` 无空白错误 |
+| 真实 OpenRouter 四场景 | 通过 | RAG、Calculator、订单 RPA 和条件式 RPA + RAG 均由真实模型正确选择工具并生成中文答案 |
+
+## Phase 5 产物
+
+- LLM Client 与归一化响应：`app/llm/client.py`、`app/llm/__init__.py`
+- LLM/配置错误：`app/core/errors.py`
+- Agent Prompt 与自写循环：`app/agent/prompts.py`、`app/agent/service.py`
+- Agent 契约：更新后的 `app/agent/schemas.py`
+- 项目内依赖与模型示例：`requirements.txt`、`.env.example`、`pytest.ini`
+- Fake LLM 自动测试：`tests/test_agent.py`、`tests/test_llm_client.py`
+- 真实模型手工冒烟入口：`scripts/smoke_agent.py`
+
+## 当前进度与下一阶段边界
+
+- 当前进度：Phase 5 已完整验收。真实模型依次正确调用 `search_company_docs`、`calculate`、`query_order`，综合问题按 `query_order -> search_company_docs` 顺序完成，并返回订单物流和退款政策来源答案。
+- 联调观察：免费模型曾触发短时 429，现有有限重试与 `LLM_RATE_LIMITED` 提示正常生效；等待约 30 秒后单独重试成功。正式面试演示前应预热验证，必要时在本机 `.env` 切换 `openai/gpt-5-mini`。
+- 下一步：严格进入 Phase 6（FastAPI Chat API）。
+- 尚未开始：Phase 6 Chat API、Streamlit、TTS 与 Docker。
