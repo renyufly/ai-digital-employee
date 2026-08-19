@@ -1,6 +1,6 @@
 """Stable data contracts used across agent-facing components."""
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -23,3 +23,22 @@ class ToolResult(BaseModel):
     error_code: str | None = None
     message: str
     sources: list[Source] = Field(default_factory=list)
+
+
+class AgentTrace(BaseModel):
+    """Short, display-safe trace entry for one agent or tool event."""
+
+    step: int
+    type: Literal["agent", "tool_start", "tool_result", "error"]
+    name: str | None = None
+    summary: str
+    duration_ms: int | None = None
+
+
+class AgentResult(BaseModel):
+    """Phase 5 result; the HTTP layer will wrap it in Phase 6."""
+
+    answer: str
+    traces: list[AgentTrace] = Field(default_factory=list)
+    sources: list[Source] = Field(default_factory=list)
+    error_code: str | None = None
