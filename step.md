@@ -232,3 +232,79 @@ $env:PLAYWRIGHT_BROWSERS_PATH = (Join-Path (Get-Location) '.playwright-browsers'
 - 当前进度：Phase 2 已完整验收，浏览器 RPA 小 Demo 已可独立运行和讲解。
 - 下一阶段：严格按照 `plan.md` 进入 Phase 3（安全 Calculator 与工具统一层）。
 - 尚未开始：Calculator、Tool Registry、RAG、LLM Client、Agent Loop、Chat API、Streamlit、TTS 与 Docker。
+
+## Phase 3 - 已实现
+
+- 阶段：Phase 3（安全 Calculator 与工具统一层）
+- 状态：已完成
+- 完成日期：2026-08-19
+- 累计进度：Phase 0、Phase 1、Phase 2、Phase 3 已完成；下一阶段为 Phase 4（RAG 离线索引）。
+- 范围控制：本次只实现安全计算器、Tool Registry、参数二次校验与统一分发，没有提前实现 RAG、LLM Client、Agent Loop、Chat API、前端或 TTS。
+
+## Phase 3 实施过程
+
+1. 完整核对 `plan.md` 的 Phase 3 目标、步骤、验收项与安全边界，并参考 `Idea.md` 中三个 Agent Tool、禁止直接 `eval`、Tool 统一错误结构及后续 Tool Calling 的项目背景。
+2. 延续项目内环境隔离规则：验证运行时仍为 `.venv/` 中的 Python 3.11.14、本地 uv 0.9.22，uv 缓存与 Python 下载目录仍固定在 `.uv-cache/` 和 `.uv-python/`；Phase 3 不需要新增第三方依赖，也没有修改任何全局环境或全局包。
+3. 创建 `app/tools/calculator.py`，唯一公开计算入口为 `calculate(expression: str) -> ToolResult`；表达式通过 `ast.parse(..., mode="eval")` 解析，代码中没有调用 `eval` 或 `exec`。
+4. Calculator 只允许普通整数/小数、括号、二元加减乘除、取模、有限幂运算及一元正负号。名称、布尔值、字符串、函数调用、属性访问、列表、字典和其他 AST 节点全部默认拒绝。
+5. 为避免资源滥用，增加多层限制：表达式最多 200 字符、AST 最多 64 个节点、单个数值绝对值最多 `10^12`、中间及最终结果绝对值最多 `10^15`、幂指数绝对值最多 10，并拒绝非有限数值和复数结果。
+6. 将非法语法、不允许的节点、除零、对零取模、超限数字、超限结果和超限幂指数统一转换为 `CALCULATION_ERROR`；未预期内部异常转换为 `TOOL_INTERNAL_ERROR`，不向调用方泄漏堆栈。
+7. 创建 `app/agent/tool_registry.py`，使用不可变 `ToolDefinition` 将工具名、中文说明、Pydantic 输入模型和异步执行函数绑定在一起；当前只显式注册已经可用的 `calculate` 和 `query_order`，没有为尚未实现的 RAG 注册占位工具。
+8. 为 `calculate` 和 `query_order` 分别创建严格输入模型，启用 `strict=True` 与 `extra="forbid"`。Registry 在执行前再次通过 Pydantic 校验模型给出的参数，拒绝缺失字段、错误类型、多余字段和非对象参数。
+9. 实现统一异步入口 `dispatch_tool(name, arguments) -> ToolResult`：未知工具返回 `UNKNOWN_TOOL`，错误参数返回 `INVALID_ARGUMENT`，执行器意外失败返回 `TOOL_INTERNAL_ERROR`；分发仅查表调用白名单函数，不动态导入或执行任意名称。
+10. 实现 `tool_schemas()`，由 Registry 的 Pydantic 输入模型生成确定的 OpenAI 兼容 Function Tool JSON Schema，供后续 Phase 5 的 LLM Client 直接使用，并保证 Schema 禁止额外字段。
+11. 新增 `tests/test_tools.py`，覆盖正常四则运算、括号、取模、有限幂、一元正负号、注入表达式、函数与属性访问、非数值字面量、除零、复杂度/数值边界、Registry 分发、Pydantic 二次校验、未知工具及 Schema 内容。
+12. 运行默认测试和包含真实 Chromium 的完整集成回归，确认新增工具层没有破坏健康检查、Mock ERP 和 Phase 2 RPA。
+
+## Phase 3 项目内运行命令
+
+本阶段没有新增依赖。若需要按锁定的项目方式同步现有依赖，仍使用：
+
+```powershell
+$env:UV_CACHE_DIR = (Join-Path (Get-Location) '.uv-cache')
+$env:UV_PYTHON_INSTALL_DIR = (Join-Path (Get-Location) '.uv-python')
+uv pip install --python .venv\Scripts\python.exe -r requirements.txt
+```
+
+运行不启动浏览器的默认测试：
+
+```powershell
+.venv\Scripts\python.exe -m pytest -q
+```
+
+运行包含项目内 Chromium 的完整回归：
+
+```powershell
+$env:PLAYWRIGHT_BROWSERS_PATH = (Join-Path (Get-Location) '.playwright-browsers')
+.venv\Scripts\python.exe -m pytest -q --run-integration
+```
+
+## Phase 3 验收结果
+
+| 验收项                     | 结果 | 证据                                                                        |
+| -------------------------- | ---- | --------------------------------------------------------------------------- |
+| `1280 * 0.8`               | 通过 | 返回 `success=true`、`result=1024` 与 `CALCULATION_ERROR` 为空              |
+| 括号和基础四则运算         | 通过 | `(2 + 3) * 4 - 6 / 2` 返回 `17`，取模、一元正负号和有限幂测试同时通过       |
+| 拒绝代码与对象访问         | 通过 | `__import__`、函数调用、属性访问、列表、字典、字符串和布尔值均被拒绝        |
+| 限制高成本计算             | 通过 | 长度、AST 节点、数值、结果和幂指数均有上限，超限返回 `CALCULATION_ERROR`    |
+| 除零和非法语法             | 通过 | 除零、对零取模和不完整表达式均返回 `CALCULATION_ERROR`                     |
+| Tool 参数二次校验          | 通过 | 缺字段、错误类型、多余字段和非对象参数均返回 `INVALID_ARGUMENT`            |
+| 未知工具安全拒绝           | 通过 | 未注册工具返回 `UNKNOWN_TOOL`，不会动态导入、执行或造成未处理异常           |
+| Tool Schema                | 通过 | 只输出 `calculate` 与 `query_order`，均包含说明、必填字段和禁止额外字段约束 |
+| 默认自动测试               | 通过 | `37 passed, 3 skipped`；跳过项仅为显式浏览器集成测试                        |
+| 完整集成回归               | 通过 | `40 passed`，真实 Uvicorn Mock ERP 与项目内 headless Chromium 均正常        |
+| Python 编译检查            | 通过 | `python -m compileall -q app mock_erp scripts tests` 成功                   |
+| Git 补丁格式检查           | 通过 | `git diff --check` 无空白错误                                               |
+
+## Phase 3 产物
+
+- 安全 Calculator：`app/tools/calculator.py`、`app/tools/__init__.py`
+- Tool Registry 与严格输入模型：`app/agent/tool_registry.py`
+- 单元与安全边界测试：`tests/test_tools.py`
+- 实施与验收记录：`step.md`
+
+## 当前进度与下一阶段边界
+
+- 当前进度：Phase 3 已完整验收；Calculator 与订单 RPA 已能通过统一 Registry 安全分发，并可生成后续 LLM Tool Calling 所需的 JSON Schema。
+- 下一阶段：严格按照 `plan.md` 进入 Phase 4（RAG 离线索引），届时才创建模拟企业 PDF、Loader、Splitter、Embedding、FAISS、metadata/manifest 和知识库 Tool。
+- 尚未开始：RAG、`search_company_docs`、LLM Client、Agent Loop、Chat API、Streamlit、TTS 与 Docker。
