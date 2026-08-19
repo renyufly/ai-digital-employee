@@ -5,12 +5,14 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
+import asyncio
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.agent.schemas import ToolResult
 from app.rpa.order_query import query_order
 from app.tools.calculator import calculate
+from app.tools.knowledge import search_company_docs
 
 
 class CalculateInput(BaseModel):
@@ -30,6 +32,16 @@ class QueryOrderInput(BaseModel):
         min_length=1,
         max_length=32,
         description="要在 Mock ERP 中查询的订单号",
+    )
+
+
+class SearchCompanyDocsInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    query: str = Field(
+        min_length=1,
+        max_length=1000,
+        description="要在企业政策、物流说明、公司介绍或产品手册中检索的问题",
     )
 
 
@@ -56,6 +68,11 @@ async def _execute_order_query(arguments: BaseModel) -> ToolResult:
     return await query_order(arguments.order_no)
 
 
+async def _execute_knowledge_search(arguments: BaseModel) -> ToolResult:
+    assert isinstance(arguments, SearchCompanyDocsInput)
+    return await asyncio.to_thread(search_company_docs, arguments.query)
+
+
 TOOL_REGISTRY: Mapping[str, ToolDefinition] = {
     "calculate": ToolDefinition(
         name="calculate",
@@ -68,6 +85,12 @@ TOOL_REGISTRY: Mapping[str, ToolDefinition] = {
         description="通过企业 ERP 查询指定订单的状态、金额和物流信息。",
         input_model=QueryOrderInput,
         executor=_execute_order_query,
+    ),
+    "search_company_docs": ToolDefinition(
+        name="search_company_docs",
+        description="搜索企业内部知识库，用于回答公司政策、产品说明、物流政策和退款政策等问题。",
+        input_model=SearchCompanyDocsInput,
+        executor=_execute_knowledge_search,
     ),
 }
 
