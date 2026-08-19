@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     backend_url: str = "http://localhost:8000"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     audio_dir: Path = Path("./data/audio")
+    tts_voice: str = "zh-CN-XiaoxiaoNeural"
+    tts_max_text_length: int = Field(default=2_000, ge=1, le=10_000)
+    tts_timeout_seconds: float = Field(default=30, gt=0)
+    audio_retention_hours: float = Field(default=24, gt=0)
 
     @model_validator(mode="after")
     def validate_chunk_window(self) -> "Settings":

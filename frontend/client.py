@@ -4,14 +4,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urljoin
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 
 DEFAULT_BACKEND_URL = "http://localhost:8000"
 DEFAULT_CHAT_TIMEOUT_SECONDS = 120.0
 DEFAULT_HEALTH_TIMEOUT_SECONDS = 2.0
+DEFAULT_TTS_TIMEOUT_SECONDS = 35.0
 
 
 class TraceItem(BaseModel):
@@ -59,6 +61,22 @@ class ChatResult:
     status_code: int
 
 
+class TTSPayload(BaseModel):
+    """Validated payload returned by POST /api/tts."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    audio_url: str
+    request_id: str
+
+    @field_validator("audio_url")
+    @classmethod
+    def _validate_audio_path(cls, value: str) -> str:
+        if not value.startswith("/audio/"):
+            raise ValueError("audio_url must use the backend audio path")
+        return value
+
+
 class FrontendServiceError(RuntimeError):
     """Short, user-facing error for connectivity or invalid backend responses."""
 
@@ -72,11 +90,13 @@ class ChatApiClient:
         *,
         chat_timeout_seconds: float = DEFAULT_CHAT_TIMEOUT_SECONDS,
         health_timeout_seconds: float = DEFAULT_HEALTH_TIMEOUT_SECONDS,
+        tts_timeout_seconds: float = DEFAULT_TTS_TIMEOUT_SECONDS,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self.backend_url = backend_url.rstrip("/")
         self.chat_timeout_seconds = chat_timeout_seconds
         self.health_timeout_seconds = health_timeout_seconds
+        self.tts_timeout_seconds = tts_timeout_seconds
         self.transport = transport
 
     def health(self) -> bool:
@@ -121,6 +141,36 @@ class ChatApiClient:
             success=response.is_success,
             status_code=response.status_code,
         )
+
+    def synthesize(self, text: str) -> TTSPayload:
+        """Generate speech for one existing assistant answer."""
+        try:
+            with self._client(self.tts_timeout_seconds) as client:
+                response = client.post("/api/tts", json={"text": text})
+        except httpx.TimeoutException as exc:
+            raise FrontendServiceError("语音生成超时，文字回答不受影响，请稍后重试。") from exc
+        except httpx.ConnectError as exc:
+            raise FrontendServiceError("无法连接语音服务，文字回答不受影响。") from exc
+        except httpx.HTTPError as exc:
+            raise FrontendServiceError("语音服务通信失败，文字回答不受影响。") from exc
+
+        if not response.is_success:
+            try:
+                detail = response.json().get("detail")
+            except (ValueError, AttributeError):
+                detail = None
+            raise FrontendServiceError(
+                detail if isinstance(detail, str) else "语音生成失败，文字回答不受影响。"
+            )
+
+        try:
+            return TTSPayload.model_validate(response.json())
+        except (ValueError, ValidationError) as exc:
+            raise FrontendServiceError("语音服务返回格式异常，文字回答不受影响。") from exc
+
+    def resolve_audio_url(self, audio_url: str) -> str:
+        """Convert the backend's safe relative audio path to a browser URL."""
+        return urljoin(f"{self.backend_url}/", audio_url.lstrip("/"))
 
     def _client(self, timeout_seconds: float) -> httpx.Client:
         return httpx.Client(

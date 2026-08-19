@@ -1,18 +1,22 @@
 """FastAPI entry point for the AI digital employee."""
 
+from contextlib import asynccontextmanager
 import logging
 from uuid import uuid4
 
 from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app.agent.schemas import AgentTrace
 from app.api.chat import ChatResponse, router as chat_router
+from app.api.tts import TTSErrorResponse, router as tts_router
 from app.core.config import get_settings
 from app.core.errors import LLMConfigurationError
 from app.core.logging import configure_logging, reset_request_id, set_request_id
+from app.tts.service import cleanup_expired_audio
 
 
 class HealthResponse(BaseModel):
@@ -23,8 +27,20 @@ settings = get_settings()
 configure_logging(settings.log_level)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="AI Digital Employee", version="0.1.0")
+settings.audio_dir.mkdir(parents=True, exist_ok=True)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    removed = cleanup_expired_audio(settings.audio_dir, settings.audio_retention_hours)
+    logger.info("Audio startup cleanup completed removed=%d", removed)
+    yield
+
+
+app = FastAPI(title="AI Digital Employee", version="0.1.0", lifespan=lifespan)
 app.include_router(chat_router)
+app.include_router(tts_router)
+app.mount("/audio", StaticFiles(directory=settings.audio_dir), name="audio")
 
 
 @app.middleware("http")
@@ -56,7 +72,21 @@ def _error_response(request: Request, status_code: int, message: str) -> JSONRes
 async def request_validation_error_handler(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse:
-    logger.info("Chat request validation failed error_count=%d", len(exc.errors()))
+    logger.info(
+        "Request validation failed path=%s error_count=%d",
+        request.url.path,
+        len(exc.errors()),
+    )
+    if request.url.path == "/api/tts":
+        request_id = getattr(request.state, "request_id", str(uuid4()))
+        response = TTSErrorResponse(
+            detail=(
+                "请求参数无效，text 必须是非空且不超过 "
+                f"{settings.tts_max_text_length} 个字符的字符串"
+            ),
+            request_id=request_id,
+        )
+        return JSONResponse(status_code=422, content=response.model_dump())
     return _error_response(
         request,
         422,
