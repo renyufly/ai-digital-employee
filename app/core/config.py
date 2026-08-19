@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     mock_erp_session_secret: str = "local-demo-session-secret"
     rpa_headless: bool = False
     rpa_timeout_ms: int = Field(default=15_000, gt=0)
+    playwright_browsers_path: Path = Path("./.playwright-browsers")
 
     backend_url: str = "http://localhost:8000"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"

@@ -61,7 +61,7 @@ uv pip install --python .venv\Scripts\python.exe -r requirements.txt
 - 自动测试：`tests/test_health.py`
 - 后续阶段占位目录：`mock_erp/`、`frontend/`、`scripts/`、`knowledge/`、`data/`
 
-## 当前进度
+## Phase 1（Mock ERP）- 已实现
 
 - 当前阶段：Phase 1（Mock ERP）
 - 状态：已完成
@@ -140,3 +140,95 @@ Phase 0 已完成项目目录、项目内 uv/Python 3.11 环境、最小依赖�
 ## 下一阶段边界
 
 按照 `plan.md`，下一阶段是 Phase 2：Playwright RPA。应在下一阶段安装项目内 Playwright/Chromium，实现自动登录、搜索和详情字段读取；本次未开始该工作。
+
+## Phase 2 - 已实现
+
+- 阶段：Phase 2（Playwright RPA）
+- 状态：已完成
+- 完成日期：2026-08-19
+- 累计进度：Phase 0、Phase 1、Phase 2 已完成；下一阶段为 Phase 3（安全 Calculator 与工具统一层）。
+- 范围控制：本次只实现 RPA 及其必要的统一 `ToolResult` 数据契约，没有提前实现 Calculator、RAG、LLM Agent、前端或 TTS。
+
+## Phase 2 实施过程
+
+1. 完整核对 `plan.md` 的 Phase 2 目标、步骤、验收和测试要求，并参考 `Idea.md` 中“通过 Playwright 操作无 API 的旧 ERP”这一项目背景及订单返回字段。
+2. 延续项目内环境隔离规则：Python 继续使用 `.uv-python/` 中的 CPython 3.11.14，依赖只通过本地 uv 安装进 `.venv/`，uv 缓存继续固定在 `.uv-cache/`；没有安装或修改全局 Python、全局 Python 包或全局浏览器版本。
+3. 在 `requirements.txt` 中仅增加当前阶段需要的 `playwright`，实际安装版本为 1.62.0。
+4. 将 Chromium、headless shell、FFmpeg 和 Playwright 辅助文件下载到项目内的 `.playwright-browsers/`，并在 `.env.example`、统一配置与 `.gitignore` 中加入 `PLAYWRIGHT_BROWSERS_PATH`；浏览器二进制没有写入用户级 Playwright 缓存。
+5. 按总体数据契约创建 `Source` 与 `ToolResult` Pydantic 模型。RPA 统一返回 `success`、`data`、`error_code`、`message`、`sources`，不向调用方抛出未经处理的浏览器异常。
+6. 创建唯一公开 RPA 入口 `async query_order(order_no: str) -> ToolResult`；订单号会先去除首尾空格，并校验非空、最大 32 字符以及仅包含字母、数字、下划线和连字符，避免把任意脚本文本带入页面操作。
+7. 每次查询均新建 Playwright、Chromium browser、context 和 page，读取 `RPA_HEADLESS`、`RPA_TIMEOUT_MS`、ERP URL 与凭证；没有实现浏览器池、session 复用或数据库/API 捷径。
+8. 浏览器严格按“打开登录页 → 填写凭证 → 提交并确认登录 → 搜索订单 → 打开详情 → 读取字段”的顺序操作，全程使用 Phase 1 的 `data-testid` 和 Playwright 显式等待，没有固定 `sleep`。
+9. 将详情文本转换成稳定订单字典：金额转为 `float`，空的物流公司、物流单号和发货时间转为 `None`。测试中发现空文本元素不符合 Playwright 的 `visible` 判定，因此详情字段改为等待 `attached`，既允许合法空值又能检测缺失元素。
+10. 通过 `finally` 关闭 browser context 和 browser。日志记录订单号、登录/查询阶段与总耗时，但不记录密码。
+11. 分别映射错误：非法参数为 `INVALID_ARGUMENT`，不存在订单为 `ORDER_NOT_FOUND`，错误凭证为 `ERP_LOGIN_FAILED`，操作超时为 `RPA_TIMEOUT`，ERP 未启动为 `ERP_UNAVAILABLE`，页面结构或金额格式变化为 `ERP_PAGE_CHANGED`，其他未预期错误为 `TOOL_INTERNAL_ERROR`。
+12. 添加 pytest integration marker 与 `--run-integration` 开关。默认测试只执行单元测试，不启动本地服务和浏览器；显式集成测试会使用临时 SQLite 数据库、临时端口、真实 Uvicorn Mock ERP 和项目内 headless Chromium。
+
+## Phase 2 项目内环境与运行命令
+
+安装 Python 依赖：
+
+```powershell
+$env:UV_CACHE_DIR = (Join-Path (Get-Location) '.uv-cache')
+$env:UV_PYTHON_INSTALL_DIR = (Join-Path (Get-Location) '.uv-python')
+uv pip install --python .venv\Scripts\python.exe -r requirements.txt
+```
+
+将 Chromium 安装到项目目录：
+
+```powershell
+$env:PLAYWRIGHT_BROWSERS_PATH = (Join-Path (Get-Location) '.playwright-browsers')
+.venv\Scripts\python.exe -m playwright install chromium
+```
+
+默认运行单元测试（不启动 Chromium）：
+
+```powershell
+.venv\Scripts\python.exe -m pytest -q
+```
+
+运行包含真实浏览器的完整测试：
+
+```powershell
+$env:PLAYWRIGHT_BROWSERS_PATH = (Join-Path (Get-Location) '.playwright-browsers')
+.venv\Scripts\python.exe -m pytest -q --run-integration
+```
+
+开发演示时先初始化并启动 Mock ERP，然后调用公开函数；默认 `RPA_HEADLESS=false`，可看到浏览器自动操作：
+
+```powershell
+.venv\Scripts\python.exe scripts\seed_erp.py
+.venv\Scripts\python.exe -m uvicorn mock_erp.app:app --port 8001
+```
+
+## Phase 2 验收结果
+
+| 验收项           | 结果 | 证据                                                                            |
+| ---------------- | ---- | ------------------------------------------------------------------------------- |
+| 查询 `10001`     | 通过 | 真实 Chromium 返回“已发货”、顺丰、`SF123456789` 和发货时间，金额为数值 `1280.0` |
+| 查询 `10002`     | 通过 | 返回“处理中”，物流公司、物流单号和发货时间均为 `None`                           |
+| 查询不存在订单   | 通过 | `99999` 返回 `success=false` 与 `ORDER_NOT_FOUND`                               |
+| 密码错误         | 通过 | 返回 `ERP_LOGIN_FAILED`，日志不包含密码                                         |
+| ERP 未启动       | 通过 | 返回 `ERP_UNAVAILABLE` 和明确的服务启动提示，无未处理堆栈                       |
+| 参数安全校验     | 通过 | 空白、超长和包含脚本字符的订单号均返回 `INVALID_ARGUMENT`，不会启动浏览器       |
+| 超时映射         | 通过 | Playwright 超时统一映射为 `RPA_TIMEOUT`                                         |
+| 浏览器资源关闭   | 通过 | context 与 browser 均在 `finally` 中关闭，集成测试连续多次查询可正常完成        |
+| 默认自动测试     | 通过 | `8 passed, 3 skipped`，被跳过项均为显式浏览器集成测试                           |
+| 完整集成测试     | 通过 | `11 passed`，使用真实 Uvicorn、临时 SQLite 与项目内 headless Chromium           |
+| Python 编译检查  | 通过 | `python -m compileall -q app mock_erp scripts tests` 成功                       |
+| Git 补丁格式检查 | 通过 | `git diff --check` 无空白错误                                                   |
+
+## Phase 2 产物
+
+- 统一契约：`app/agent/schemas.py`
+- RPA 实现：`app/rpa/order_query.py`、`app/rpa/__init__.py`
+- 环境配置：`requirements.txt`、`.env.example`、`.gitignore`、`app/core/config.py`
+- 测试控制：`pytest.ini`、`tests/conftest.py`
+- 单元测试：`tests/test_rpa_validation.py`
+- 真实浏览器集成测试：`tests/integration/test_order_query.py`
+
+## 当前进度与下一阶段边界
+
+- 当前进度：Phase 2 已完整验收，浏览器 RPA 小 Demo 已可独立运行和讲解。
+- 下一阶段：严格按照 `plan.md` 进入 Phase 3（安全 Calculator 与工具统一层）。
+- 尚未开始：Calculator、Tool Registry、RAG、LLM Client、Agent Loop、Chat API、Streamlit、TTS 与 Docker。
