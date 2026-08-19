@@ -1,0 +1,2 @@
+# Keep uv-managed downloads inside this repository.
+cache-dir = ".uv-cache"
