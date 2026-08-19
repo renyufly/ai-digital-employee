@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     mock_erp_url: str = "http://localhost:8001"
     mock_erp_username: str = "admin"
     mock_erp_password: str = "admin123"
+    mock_erp_database_path: Path = Path("./data/orders.db")
+    mock_erp_session_secret: str = "local-demo-session-secret"
     rpa_headless: bool = False
     rpa_timeout_ms: int = Field(default=15_000, gt=0)
 
