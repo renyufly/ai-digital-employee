@@ -620,3 +620,108 @@ $env:HF_HUB_OFFLINE = '1'
 - 已确认边界：每次请求独立，`session_id` 暂不持久化；前端需要使用高于 RPA 超时的 HTTP timeout；TTS 尚未实现，所以 `audio_url=null`。
 - 下一步：严格按照 `plan.md` 进入 Phase 7（Streamlit 前端），前端只通过 HTTP 调用本阶段 API，并使用自身 `session_state` 展示界面历史。
 - 尚未开始：Phase 7 Streamlit、Phase 8 TTS、Docker 与 P2 会话持久化。
+
+## Phase 7 - 已完整验收
+
+- 阶段：Phase 7（Streamlit 前端）
+- 状态：已完成，包括 HTTP-only 前端客户端、界面聊天历史、三个示例问题、执行轨迹、折叠来源、用户错误提示、服务状态和响应式布局检查。
+- 完成日期：2026-08-20
+- 累计进度：Phase 0 至 Phase 7 已完整验收，M3（完整 Agent 多工具链路和 UI）达到核心完成标准；下一阶段为 Phase 8（TTS，P1）。
+- 范围控制：本次没有提前实现 TTS 服务、会话持久化、知识上传、复杂 CSS、动态图表、登录或 Docker；语音播放按钮仅作为 Phase 8 的禁用占位。
+
+## Phase 7 实施过程
+
+1. 严格以 `plan.md` 的阶段编号为准，将 Phase 7 定义为 Streamlit 前端；`Idea.md` 中较早版本的 Phase 7（TTS）不覆盖修订计划，TTS 继续留在 Phase 8。参考 `Idea.md` 的核心退款政策、订单查询和条件式 RPA + RAG 场景设计页面内容。
+2. 延续项目内环境隔离：Python 使用 uv 管理的项目 `.venv/`，uv 缓存和 Python 下载目录分别固定为 `.uv-cache/` 与 `.uv-python/`。新增 `streamlit>=1.47,<2.0` 后只安装到项目虚拟环境，实际解析版本为 `streamlit==1.62.0`，没有修改全局 Python、全局包或系统浏览器。
+3. 创建 `frontend/client.py`，前端只通过 HTTP 调用 FastAPI 的 `GET /health` 和 `POST /api/chat`，没有导入 Agent、RAG 或 RPA 模块。Chat 超时为 120 秒，高于 RPA 超时；健康检查使用 2 秒短超时。
+4. 在前端侧复制并校验公开 HTTP 数据契约，包括 answer、traces、sources、audio_url 和 request_id；未知额外字段允许忽略，缺失必要字段或非 JSON 响应会转换为面向用户的“后端返回格式异常”短提示。
+5. HTTP 200 响应显示正常答案；后端 4xx/5xx 的统一 ChatResponse 保留 answer、trace、source 和 request_id 并作为错误样式展示。连接拒绝、请求超时和普通 HTTP 通信异常分别映射为可操作的中文提示，不向用户暴露内部异常。
+6. 创建 `frontend/streamlit_app.py`，使用 `st.session_state` 保存 UI 聊天历史和一个仅用于请求标识的 UI session_id。后端仍按 Phase 6 契约只处理当前问题，因此界面历史不等于 LLM 会话记忆。
+7. 页面顶部显示项目标题、技术链路、后端在线/离线状态和“所有订单和公司资料均为模拟数据”声明；主区显示聊天历史、三个示例按钮和最大 2000 字符输入框；右侧显示最新一次 Agent 执行轨迹。
+8. 三个示例按钮分别对应退款政策、订单 10001 和条件式订单 + 退款政策问题。提交期间显示 spinner，明确订单查询可能启动 ERP 浏览器；请求完成后触发 Streamlit rerun，从 session_state 恢复全部历史。
+9. Trace 逐项显示步骤号、工具名、成功/失败图标、安全摘要和耗时，并在面板底部显示 request_id。多工具响应可同时看到 `query_order` 和 `search_company_docs`，便于面试时展示 Agent 的决策过程。
+10. RAG Source 在每条助手回答下方使用默认收起的 expander，显示文件名、页码、chunk ID、相似度和命中文本；没有来源时不创建空面板，避免页面过长。
+11. 回答下方保留禁用的“语音播放（Phase 8）”按钮并明确说明尚未实现，保证阶段边界真实，不伪造可用 TTS 能力。
+12. 创建 `tests/test_frontend_client.py`，使用 `httpx.MockTransport` 覆盖 health/chat HTTP 路径、session_id、成功契约、结构化后端错误、连接失败和异常响应契约，不依赖真实 OpenRouter、ERP 或浏览器。
+13. 创建 `tests/test_frontend_app.py`，使用 Streamlit 官方 `AppTest` 覆盖初始布局、服务状态、三个示例按钮、单一 UI session_id、六条历史消息、多工具轨迹、默认折叠来源、重复提问历史和后端断连错误显示。
+14. 使用真实 Streamlit 进程完成启动冒烟检查：`/_stcore/health` 返回 200/ok，首页返回 200。随后通过本地浏览器分别检查默认桌面、1366×768、768×900 和 430×900 视口；常用笔记本布局保持主区和右侧轨迹，窄屏自动压缩或纵向堆叠，关键控件仍清楚可读。
+15. 完成默认快速回归、真实本地 BGE/FAISS、Mock ERP、项目内 Chromium 的完整集成回归、Python 编译、uv 依赖兼容性和 Git 补丁格式检查。Phase 7 自动验收使用 Fake HTTP 保持确定性，没有再次消耗 OpenRouter 额度；Phase 5 已完成同一 Agent 四个真实问题的模型联调。
+
+## Phase 7 项目内环境与运行命令
+
+仅向项目虚拟环境安装或检查依赖：
+
+```powershell
+$env:UV_CACHE_DIR = (Join-Path (Get-Location) '.uv-cache')
+$env:UV_PYTHON_INSTALL_DIR = (Join-Path (Get-Location) '.uv-python')
+uv pip install --python .venv\Scripts\python.exe -r requirements.txt
+uv pip check --python .venv\Scripts\python.exe
+```
+
+分别启动 Mock ERP、FastAPI 和 Streamlit；每条命令在项目根目录的独立终端执行：
+
+```powershell
+$env:PLAYWRIGHT_BROWSERS_PATH = (Join-Path (Get-Location) '.playwright-browsers')
+.venv\Scripts\python.exe -m uvicorn mock_erp.app:app --port 8001
+
+.venv\Scripts\python.exe -m uvicorn app.main:app --port 8000
+
+.venv\Scripts\python.exe -m streamlit run frontend\streamlit_app.py --server.port 8501
+# 浏览器访问 http://localhost:8501
+```
+
+前端通过根目录 `.env` 的 `BACKEND_URL` 访问后端，默认值为 `http://localhost:8000`。订单查询需要 Mock ERP；RAG 问题需要已构建向量索引；所有真实 Agent 问题都需要在本机 `.env` 填写有效 `OPENROUTER_API_KEY`。
+
+运行 Phase 7 定向测试和默认回归：
+
+```powershell
+.venv\Scripts\python.exe -m pytest -q tests\test_frontend_client.py tests\test_frontend_app.py
+.venv\Scripts\python.exe -m pytest -q
+```
+
+运行包含真实本地 BGE/FAISS、Mock ERP 和项目内 Chromium 的完整回归，仍不会调用 OpenRouter：
+
+```powershell
+$env:PLAYWRIGHT_BROWSERS_PATH = (Join-Path (Get-Location) '.playwright-browsers')
+$env:HF_HUB_OFFLINE = '1'
+.venv\Scripts\python.exe -m pytest -q --run-integration
+```
+
+## Phase 7 验收结果
+
+| 验收项 | 结果 | 证据 |
+| --- | --- | --- |
+| HTTP-only 前端边界 | 通过 | `frontend/` 不导入 Agent、RAG 或 RPA；只调用 `/health` 与 `/api/chat` |
+| 三个示例问题按钮 | 通过 | AppTest 依次点击三个按钮，Fake Client 收到计划规定的三个完整问题 |
+| UI 聊天历史 | 通过 | 三次示例调用保留 6 条 user/assistant 消息；重复手输同一问题仍保留此前历史 |
+| 单轮后端语义 | 通过 | UI 可复用 session_id 便于标识，但每次只向 API 发送当前 message，不发送历史 |
+| 请求等待提示与超时 | 通过 | spinner 提示 Agent/ERP 执行；Chat 客户端超时固定为 120 秒 |
+| Agent 执行轨迹 | 通过 | 显示步骤、工具名、成功/失败、耗时、摘要和 request_id；综合问题显示两个工具步骤 |
+| RAG 来源 | 通过 | 显示 PDF 文件、页码、chunk、分数和片段；expander 默认收起 |
+| 用户错误提示 | 通过 | 结构化 4xx/5xx、连接失败、超时和错误响应格式均有短中文提示 |
+| 模拟数据声明 | 通过 | 页面顶部明确标注所有订单与公司资料均为模拟数据 |
+| 后端关闭场景 | 通过 | health 显示离线警告，提交问题后在聊天区显示连接错误，不产生 UI 未处理异常 |
+| 笔记本与窄屏 | 通过 | 实际检查 1366×768、768×900、430×900；关键控件可读，窄屏纵向堆叠 |
+| Streamlit 进程冒烟 | 通过 | 本地 `:8501/_stcore/health` 为 200/ok，首页为 200 |
+| Phase 7 定向测试 | 通过 | `9 passed` |
+| 默认自动测试 | 通过 | `81 passed, 4 skipped`；跳过项仅为显式本地集成测试 |
+| 完整本地集成回归 | 通过 | `85 passed`，真实 BGE/FAISS、Uvicorn Mock ERP 和项目内 headless Chromium 全部正常 |
+| uv 环境兼容性 | 通过 | `uv pip check --python .venv\Scripts\python.exe` 检查 90 个包，全部兼容 |
+| Python 编译检查 | 通过 | `python -m compileall -q app frontend mock_erp scripts tests` 成功 |
+| Git 补丁格式检查 | 通过 | `git diff --check` 无空白错误 |
+
+## Phase 7 产物
+
+- Streamlit 页面与 session_state UI 历史：`frontend/streamlit_app.py`
+- HTTP Client、前端响应模型和错误翻译：`frontend/client.py`
+- Frontend 包：`frontend/__init__.py`
+- Streamlit 项目依赖：更新后的 `requirements.txt`
+- HTTP Client 自动测试：`tests/test_frontend_client.py`
+- Streamlit AppTest 自动测试：`tests/test_frontend_app.py`
+
+## 当前进度与下一阶段边界
+
+- 当前进度：Phase 0 至 Phase 7 已完整验收，M3 已完成。完整 Agent 多工具链路现在具有可演示 UI，能展示答案、来源与执行轨迹。
+- 已确认边界：UI 历史只存在于当前 Streamlit session；后端 Agent 仍按单轮问题独立处理。TTS 按钮目前禁用，`audio_url` 仍为 null。
+- 下一步：严格按照 `plan.md` 进入 Phase 8（TTS，P1），先通过独立 TTS API 生成音频，再启用前端播放按钮。
+- 尚未开始：Phase 8 TTS、Phase 9 演示稳定性增强、Phase 10 Docker、Phase 11 README/简历材料，以及 P2 会话持久化和知识上传。
