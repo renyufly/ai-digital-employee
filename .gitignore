@@ -5,6 +5,7 @@
 .venv/
 .uv-cache/
 .uv-python/
+.playwright-browsers/
 
 # Python artifacts
 __pycache__/
