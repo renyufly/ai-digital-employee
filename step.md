@@ -523,3 +523,100 @@ $env:HF_HUB_OFFLINE = '1'
 - 联调观察：免费模型曾触发短时 429，现有有限重试与 `LLM_RATE_LIMITED` 提示正常生效；等待约 30 秒后单独重试成功。正式面试演示前应预热验证，必要时在本机 `.env` 切换 `openai/gpt-5-mini`。
 - 下一步：严格进入 Phase 6（FastAPI Chat API）。
 - 尚未开始：Phase 6 Chat API、Streamlit、TTS 与 Docker。
+
+## Phase 6 - 已完整验收
+
+- 阶段：Phase 6（FastAPI Chat API）
+- 状态：已完成，包括稳定 HTTP 契约、请求校验、request_id、错误映射、OpenAPI 示例和 API 自动测试。
+- 完成日期：2026-08-19
+- 累计进度：Phase 0 至 Phase 6 已完整验收；下一阶段为 Phase 7（Streamlit 前端）。
+- 范围控制：本次只实现 Chat API，没有提前实现 Streamlit、会话持久化、TTS、知识上传或 Docker。
+
+## Phase 6 实施过程
+
+1. 完整核对 `plan.md` 的 Phase 6 目标、8 项具体步骤、统一响应契约和验收项，并参考 `Idea.md` 中订单查询、企业退款政策和条件式 RPA + RAG 三个演示场景。
+2. 延续项目内环境隔离规则：Python 继续使用 `.uv-python/` 中的 CPython 3.11.14 和 uv 创建的 `.venv/`，uv 缓存固定在 `.uv-cache/`；本阶段没有新增依赖，也没有修改全局 Python、全局包或系统浏览器。
+3. 创建 `app/api/chat.py` 与 API 包，提供 `POST /api/chat`。请求只包含必填 `message` 和可选 `session_id`；`session_id` 仅作为 P2 会话能力的预留字段，本阶段不保存、不读取，也不向 Agent 传递历史上下文。
+4. 创建严格的 `ChatRequest`：禁止未知字段，自动去除消息首尾空白，拒绝全空白消息，将消息长度限制为 1 至 2000 个字符，并将可选 `session_id` 限制为 1 至 128 个字符。
+5. 创建计划规定的 `ChatResponse`：统一返回 `answer`、`traces`、`sources`、`audio_url` 和 `request_id`。Phase 6 不实现 TTS，因此 `audio_url` 固定为 `null`；Pydantic 模型保证 Agent Trace 与 RAG Source 可稳定序列化为 JSON。
+6. 通过 FastAPI Dependency 注入并进程内复用无会话状态的 `AgentService`。测试可用 Fake Agent 替换依赖，不会调用真实 OpenRouter、BGE 或浏览器；生产请求仍连接 Phase 5 已验收的真实 Agent 链路。
+7. 调整已有 request-id middleware：每个 HTTP 请求生成新的 UUID，写入 `request.state`、响应 `X-Request-ID` Header 和 `ChatResponse.request_id`，并通过 ContextVar 自动进入该请求期间的全部日志。
+8. Chat API 逐条记录 Agent Trace 的轮次、类型、工具名、耗时和安全摘要。日志过滤器会为这些记录附加同一 request_id，因此可以从一次 HTTP 响应反查该次 Agent、LLM、RAG 与 RPA 日志；不记录完整用户 Prompt、API Key、Authorization Header 或 ERP 密码。
+9. 为预期业务错误建立 HTTP 状态映射，同时保持统一 ChatResponse：参数问题为 400/422，订单或资料不存在为 404，上游工具或模型故障为 502，模型配置、限流或知识库未就绪为 503，LLM/RPA 超时为 504。Tool 或 Agent 失败不会退化成无信息的默认 500。
+10. 为请求校验、LLM 配置和未知异常增加全局处理：校验失败返回统一 422 结构；缺少 Key 或模型配置返回清楚的 503；真正未知异常以 `logger.exception` 保留服务端堆栈，但前端只收到脱敏的 500 提示。
+11. 在 OpenAPI 的 ChatRequest Schema 中加入退款政策、订单 10001 和“已发货后再查退款政策”三个核心问题示例；`/docs` 同时说明每个请求独立，RPA 比普通问答慢，调用端超时必须高于 `RPA_TIMEOUT_MS`，演示前端建议至少 120 秒。
+12. 新增 `tests/test_chat_api.py`，覆盖成功响应、Trace/Source JSON、Header 与 Body request_id 一致、每次请求独立、三个核心问题统一结构、空白/过长消息、预期超时错误、缺少 LLM 配置、未知异常脱敏、OpenAPI 示例和 `/docs` 可访问。
+13. API 测试首次执行发现 pytest-asyncio 严格模式不会自动接管普通 `pytest.fixture` 声明的异步 fixture；改为显式 `pytest_asyncio.fixture` 后定向测试全部通过。该修正只涉及测试生命周期，没有改变运行时代码。
+14. 完成默认快速回归、真实本地 BGE/FAISS、Mock ERP、项目内 Chromium 的完整集成回归、Python 编译、uv 依赖兼容性和 Git 补丁格式检查。本阶段没有进行新的真实 OpenRouter 付费/限流调用；Phase 5 已完成相同 Agent 的四场景真实联调，Phase 6 使用 Fake Agent 确定性验证 HTTP 包装层。
+
+## Phase 6 项目内环境与运行命令
+
+只检查项目虚拟环境，不修改全局依赖：
+
+```powershell
+$env:UV_CACHE_DIR = (Join-Path (Get-Location) '.uv-cache')
+$env:UV_PYTHON_INSTALL_DIR = (Join-Path (Get-Location) '.uv-python')
+uv pip check --python .venv\Scripts\python.exe
+```
+
+启动后端并打开交互式 API 文档：
+
+```powershell
+.venv\Scripts\python.exe -m uvicorn app.main:app --port 8000
+# 浏览器访问 http://localhost:8000/docs
+```
+
+调用 Chat API；订单/RPA 或综合问题的客户端超时应高于 `RPA_TIMEOUT_MS`，建议至少 120 秒：
+
+```powershell
+$body = @{ message = '退款多久到账？' } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri http://localhost:8000/api/chat -ContentType 'application/json' -Body $body -TimeoutSec 120
+```
+
+默认快速回归，不调用 OpenRouter、不加载真实模型和浏览器：
+
+```powershell
+.venv\Scripts\python.exe -m pytest -q
+```
+
+包含真实 BGE/FAISS、Mock ERP 和项目内 Chromium 的完整本地回归，仍不调用 OpenRouter：
+
+```powershell
+$env:PLAYWRIGHT_BROWSERS_PATH = (Join-Path (Get-Location) '.playwright-browsers')
+$env:HF_HUB_OFFLINE = '1'
+.venv\Scripts\python.exe -m pytest -q --run-integration
+```
+
+## Phase 6 验收结果
+
+| 验收项 | 结果 | 证据 |
+| --- | --- | --- |
+| `POST /api/chat` | 通过 | Fake Agent API 测试验证请求进入 Agent，并返回统一 ChatResponse |
+| 消息与会话字段校验 | 通过 | 空字符串、全空白、超过 2000 字符、空 session_id 和未知字段由严格模型拒绝 |
+| 三个核心问题 | 通过 | 退款、订单和条件式综合问题均返回相同的 5 字段结构 |
+| Trace 与 Source JSON | 通过 | 工具 Trace、中文来源内容、页码、chunk ID 和 score 均正确序列化 |
+| request_id 贯通 | 通过 | 每次请求生成不同 UUID；响应 Header 与 Body 一致；Trace 日志共享 ContextVar request_id |
+| 单轮请求隔离 | 通过 | 相同 session_id 的两个请求只将各自当前 message 交给 Agent，不共享历史 |
+| 预期错误结构 | 通过 | Agent 超时返回统一 504 ChatResponse，不返回默认 HTML 或无信息 500 |
+| 未知异常脱敏 | 通过 | 服务端保留堆栈，响应不包含测试注入的内部异常细节 |
+| OpenAPI 与 `/docs` | 通过 | `/docs`、`/openapi.json` 可访问，Schema 含三个核心问题示例和超时说明 |
+| API 定向测试 | 通过 | `13 passed` |
+| 默认自动测试 | 通过 | `72 passed, 4 skipped`；跳过项仅为显式本地集成测试 |
+| 完整本地集成回归 | 通过 | `76 passed`，真实 BGE/FAISS、Uvicorn Mock ERP 和项目内 headless Chromium 全部正常 |
+| uv 环境兼容性 | 通过 | `uv pip check --python .venv\Scripts\python.exe` 检查 71 个包，全部兼容 |
+| Python 编译检查 | 通过 | `python -m compileall -q app mock_erp scripts tests` 成功 |
+| Git 补丁格式检查 | 通过 | `git diff --check` 无空白错误 |
+
+## Phase 6 产物
+
+- Chat API、请求/响应模型、错误映射和 OpenAPI 示例：`app/api/chat.py`
+- API 包：`app/api/__init__.py`
+- request_id middleware 与全局异常处理：更新后的 `app/main.py`
+- Fake Agent API 自动测试：`tests/test_chat_api.py`
+
+## 当前进度与下一阶段边界
+
+- 当前进度：Phase 6 已完整验收。FastAPI 已通过统一 HTTP 契约暴露 Phase 5 Agent，`/docs` 可直接查看并调用三个核心问题。
+- 已确认边界：每次请求独立，`session_id` 暂不持久化；前端需要使用高于 RPA 超时的 HTTP timeout；TTS 尚未实现，所以 `audio_url=null`。
+- 下一步：严格按照 `plan.md` 进入 Phase 7（Streamlit 前端），前端只通过 HTTP 调用本阶段 API，并使用自身 `session_state` 展示界面历史。
+- 尚未开始：Phase 7 Streamlit、Phase 8 TTS、Docker 与 P2 会话持久化。
