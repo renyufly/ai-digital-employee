@@ -725,3 +725,111 @@ $env:HF_HUB_OFFLINE = '1'
 - 已确认边界：UI 历史只存在于当前 Streamlit session；后端 Agent 仍按单轮问题独立处理。TTS 按钮目前禁用，`audio_url` 仍为 null。
 - 下一步：严格按照 `plan.md` 进入 Phase 8（TTS，P1），先通过独立 TTS API 生成音频，再启用前端播放按钮。
 - 尚未开始：Phase 8 TTS、Phase 9 演示稳定性增强、Phase 10 Docker、Phase 11 README/简历材料，以及 P2 会话持久化和知识上传。
+
+## Phase 8 - 已完整验收
+
+- 阶段：Phase 8（TTS，P1）
+- 状态：已完成，包括按需中文语音生成、本地 MP3 保存、独立 TTS API、安全静态音频访问、Streamlit 播放、重复点击复用、失败隔离和过期清理。
+- 完成日期：2026-08-20
+- 累计进度：Phase 0 至 Phase 8 已完整验收，项目已具备文字 Agent 核心链路和可选语音输出；下一阶段为 Phase 9（测试、日志与演示稳定性）。
+- 范围控制：本次只实现 `plan.md` 规定的单一 TTS Provider，没有增加 ASR、流式语音、本地 TTS 模型、多 Provider 后台、Avatar 假实现、会话持久化、Docker 或知识上传。
+
+## Phase 8 实施过程
+
+1. 严格以 `plan.md` 的修订阶段为准，将 Phase 8 定义为 TTS；`Idea.md` 仅用于“LLM 回答 → TTS 音频 → 未来数字人输入”的项目背景，不采用其中旧版 Phase 7/8 编号。
+2. 采用已确认的单一 Provider `edge-tts` 和中文音色 `zh-CN-XiaoxiaoNeural`。TTS 与 OpenRouter LLM、Agent Loop 和三个业务 Tool 完全解耦，不新增模型下载或 TTS API Key；只有用户点击按钮时才访问在线语音服务。
+3. 延续项目内环境隔离：向 `requirements.txt` 增加 `edge-tts>=7.2,<8.0`，使用 uv 只安装到项目 `.venv/`，uv 缓存和 Python 安装目录继续固定为 `.uv-cache/` 与 `.uv-python/`。实际解析为 `edge-tts==7.2.8`，没有修改全局 Python、全局包或系统环境版本。
+4. 在集中配置中增加 `TTS_VOICE`、`TTS_MAX_TEXT_LENGTH`、`TTS_TIMEOUT_SECONDS` 和 `AUDIO_RETENTION_HOURS`；默认分别为 `zh-CN-XiaoxiaoNeural`、2000 字符、30 秒和 24 小时，并同步更新 `.env.example`。
+5. 创建 `app/tts/service.py`，实现最小 `TTSService.synthesize(text) -> Path`。每次成功请求使用 UUID 作为文件名，将 MP3 保存到配置的 `data/audio/`；生成空文件、Provider 异常或超时时统一转换为安全中文错误，并删除可能残留的部分文件。
+6. 创建音频生命周期清理函数，只扫描配置音频目录下的 `*.mp3`，后端启动时删除超过保留时间的文件；不会递归删除目录，也不会触碰其他扩展名文件。`data/audio/` 已由现有 `.gitignore` 排除，不会提交运行时音频。
+7. 创建独立 `POST /api/tts`。请求仅接受一个去除首尾空白后的非空 `text`，拒绝未知字段和超过 2000 字符的文本；成功返回 `/audio/<UUID>.mp3` 与 request_id，Provider 失败返回 502，超时返回 504，校验失败返回 422。
+8. 在 FastAPI 中挂载只读 `/audio` 静态路径，浏览器可通过后端 URL 获取生成的 MP3；TTS 使用自己的成功和错误响应模型，未改变原有 `/api/chat` 契约，ChatResponse 的 `audio_url` 仍保持按需生成前为 null。
+9. 扩展前端 HTTP Client，增加独立 TTS 超时、成功响应校验和错误翻译。只接受后端 `/audio/` 相对路径并拼接为同一 Backend URL，拒绝外部音频 URL，避免由响应数据把播放器重定向到任意站点。
+10. 将 Phase 7 的禁用占位按钮替换为每条正常 AI 回答下方的“生成语音”按钮。首次点击把当前 assistant answer 发送给 TTS API；成功后把 audio_url 保存到该条 Streamlit session 消息并使用 `st.audio` 播放，页面刷新或重复渲染不会再次请求 Provider。
+11. TTS 失败只在对应回答下显示短提示，原文字答案、来源和 Agent Trace 全部保留，按钮仍可重试；后端 Chat/Agent 错误消息不提供语音按钮，避免为错误提示创建无价值音频。
+12. 创建 `tests/test_tts_service.py`，通过可替换 Communicator 覆盖指定中文音色、UUID MP3、本地写入、Provider 异常、超时、部分文件删除，以及只清理过期 MP3 的边界。
+13. 创建 `tests/test_tts_api.py`，通过 Fake TTS Service 覆盖文本规范化、空文本、纯空格、超长文本、缺字段、502/504 映射、request_id、OpenAPI 路径和真实 FastAPI 静态 MP3 响应。
+14. 扩展前端 Client 与 Streamlit AppTest，覆盖 TTS HTTP 请求、相对音频 URL 解析、外部 URL 拒绝、首次点击生成、session 内重复复用、`st.audio` 渲染，以及失败后保留回答并允许重试。
+15. 使用项目 `.venv` 中的真实 `edge-tts==7.2.8` 联网生成中文句子“AI 数字员工语音功能测试成功。”，得到 20,736 字节 MP3，确认当前音色与在线服务可用；验证后删除该明确的冒烟文件，没有在仓库中遗留测试音频。
+16. 完成 Phase 8 定向测试、默认回归、真实本地 BGE/FAISS、Mock ERP 和项目内 Chromium 的完整集成回归、Python 编译、uv 依赖兼容性和 Git 补丁格式检查。自动测试中的 TTS Provider 使用 Fake 保持稳定，真实在线调用仅作为手工冒烟，避免测试套件依赖外部服务。
+
+## Phase 8 项目内环境与运行命令
+
+依赖只安装到项目虚拟环境：
+
+```powershell
+$env:UV_CACHE_DIR = (Join-Path (Get-Location) '.uv-cache')
+$env:UV_PYTHON_INSTALL_DIR = (Join-Path (Get-Location) '.uv-python')
+uv pip install --python .venv\Scripts\python.exe -r requirements.txt
+uv pip check --python .venv\Scripts\python.exe
+```
+
+服务启动命令与 Phase 7 相同；TTS 不需要单独进程，包含在 FastAPI Backend 中：
+
+```powershell
+.venv\Scripts\python.exe -m uvicorn app.main:app --port 8000
+.venv\Scripts\python.exe -m streamlit run frontend\streamlit_app.py --server.port 8501
+```
+
+TTS API 示例：
+
+```http
+POST http://localhost:8000/api/tts
+Content-Type: application/json
+
+{"text":"订单 10001 已经发货。"}
+```
+
+成功响应中的 `/audio/<UUID>.mp3` 由同一 Backend 提供。实际语音生成需要后端可以访问互联网，但不需要新的 API Key。
+
+运行 Phase 8 定向测试、默认回归和完整本地集成回归：
+
+```powershell
+.venv\Scripts\python.exe -m pytest -q tests\test_tts_service.py tests\test_tts_api.py tests\test_frontend_client.py tests\test_frontend_app.py
+.venv\Scripts\python.exe -m pytest -q
+
+$env:PLAYWRIGHT_BROWSERS_PATH = (Join-Path (Get-Location) '.playwright-browsers')
+$env:HF_HUB_OFFLINE = '1'
+.venv\Scripts\python.exe -m pytest -q --run-integration
+```
+
+## Phase 8 验收结果
+
+| 验收项 | 结果 | 证据 |
+| --- | --- | --- |
+| 中文回答生成 | 通过 | 真实 `edge-tts==7.2.8` + `zh-CN-XiaoxiaoNeural` 生成 20,736 字节中文 MP3 |
+| 本地音频保存 | 通过 | UUID 文件写入 `data/audio/`，目录不存在时自动创建且已被 Git 忽略 |
+| 独立 TTS API | 通过 | `POST /api/tts` 返回 audio_url/request_id；OpenAPI 包含独立 `tts` tag |
+| 安全音频访问 | 通过 | `/audio/<filename>.mp3` 返回 `audio/mpeg`；前端拒绝非 `/audio/` URL |
+| 文本限制 | 通过 | 空字符串、纯空格、缺少 text、超过 2000 字符和未知字段均拒绝 |
+| Streamlit 按需播放 | 通过 | 每条正常回答提供生成按钮；成功后由 `st.audio` 使用 Backend 音频 URL |
+| 重复点击行为 | 通过 | 首次成功后 audio_url 保存在对应 UI 消息；rerun 不再次调用 TTS |
+| TTS 故障隔离 | 通过 | Provider 失败/超时不改变文字、来源或 Trace；显示短提示并允许重试 |
+| 临时文件清理 | 通过 | 失败/超时删除部分文件；启动时只删除超过 24 小时的 MP3 |
+| Phase 8 定向测试 | 通过 | `27 passed`，覆盖 Service、API、Frontend Client 和 Streamlit UI |
+| 默认自动测试 | 通过 | 最终 `99 passed, 4 skipped`；跳过项仅为显式本地集成测试 |
+| 完整本地集成回归 | 通过 | 最终 `103 passed`，真实 BGE/FAISS、Mock ERP、项目内 headless Chromium 全部正常 |
+| uv 环境兼容性 | 通过 | `uv pip check --python .venv\Scripts\python.exe` 检查 99 个包，全部兼容 |
+| Python 编译检查 | 通过 | `python -m compileall -q app frontend mock_erp scripts tests` 成功 |
+| Git 补丁格式检查 | 通过 | `git diff --check` 无空白错误 |
+
+## Phase 8 产物
+
+- TTS API 与请求/响应契约：`app/api/tts.py`
+- Edge TTS 服务、本地 UUID MP3 和过期清理：`app/tts/service.py`
+- TTS 包：`app/tts/__init__.py`
+- TTS 错误类型：更新后的 `app/core/errors.py`
+- TTS 配置：更新后的 `app/core/config.py` 与 `.env.example`
+- TTS Router、启动清理和 `/audio` 静态目录：更新后的 `app/main.py`
+- 前端 TTS HTTP Client 与安全音频 URL：更新后的 `frontend/client.py`
+- 按需生成、播放、复用和失败提示：更新后的 `frontend/streamlit_app.py`
+- Provider 依赖：更新后的 `requirements.txt`
+- TTS Service/API 自动测试：`tests/test_tts_service.py`、`tests/test_tts_api.py`
+- 前端 TTS 自动测试：更新后的 `tests/test_frontend_client.py`、`tests/test_frontend_app.py`
+
+## 当前进度与下一阶段边界
+
+- 当前进度：Phase 0 至 Phase 8 已完整验收。用户可先完成文本聊天，再按需为任一正常 AI 回答生成并播放中文语音；TTS 故障不影响核心 Agent 演示。
+- 已确认边界：音频只保存在 Backend 本地 `data/audio/`，默认保留 24 小时；Streamlit 的 audio_url 复用只存在于当前 UI session，不等于服务端会话持久化。
+- 下一步：严格按照 `plan.md` 进入 Phase 9（测试、日志与演示稳定性），集中增强演示前检查和故障恢复，不在 Phase 8 提前实现 Docker。
+- 尚未开始：Phase 9 演示稳定性增强、Phase 10 Docker、Phase 11 README/简历材料，以及 P2 会话持久化、知识上传和数字人服务。

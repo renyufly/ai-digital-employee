@@ -10,6 +10,7 @@ from frontend.client import (
     ChatResult,
     FrontendServiceError,
     SourceItem,
+    TTSPayload,
     TraceItem,
 )
 from frontend.streamlit_app import EXAMPLE_QUESTIONS
@@ -22,7 +23,9 @@ APP_PATH = Path(__file__).resolve().parents[1] / "frontend" / "streamlit_app.py"
 class FakeChatClient:
     available: bool = True
     fail: bool = False
+    tts_fail: bool = False
     calls: list[tuple[str, str | None]] = field(default_factory=list)
+    tts_calls: list[str] = field(default_factory=list)
 
     def health(self) -> bool:
         return self.available
@@ -73,6 +76,15 @@ class FakeChatClient:
             success=True,
             status_code=200,
         )
+
+    def synthesize(self, text: str) -> TTSPayload:
+        self.tts_calls.append(text)
+        if self.tts_fail:
+            raise FrontendServiceError("语音生成失败，文字回答不受影响。")
+        return TTSPayload(audio_url="/audio/test.mp3", request_id="tts-request")
+
+    def resolve_audio_url(self, audio_url: str) -> str:
+        return f"http://localhost:8000{audio_url}"
 
 
 def make_app(client: FakeChatClient) -> AppTest:
@@ -138,3 +150,36 @@ def test_backend_connection_error_is_shown_in_chat() -> None:
     assert any("后端服务未连接" in item.value for item in app.warning)
     assert any("无法连接后端服务" in item.value for item in app.error)
     assert app.session_state["messages"][-1]["error"] is True
+
+
+def test_tts_button_generates_once_and_reuses_audio_on_rerun() -> None:
+    app = make_app(FakeChatClient())
+    app.button[0].click().run()
+
+    tts_button = next(button for button in app.button if button.label == "🔊 生成语音")
+    tts_button.click().run()
+
+    client = app.session_state["chat_client"]
+    assistant = app.session_state["messages"][-1]
+    assert not app.exception
+    assert client.tts_calls == [assistant["content"]]
+    assert assistant["audio_url"] == "/audio/test.mp3"
+    assert any("页面刷新不会重复生成" in item.value for item in app.caption)
+    assert all(button.label != "🔊 生成语音" for button in app.button)
+
+    app.run()
+    assert client.tts_calls == [assistant["content"]]
+
+
+def test_tts_failure_keeps_answer_and_allows_retry() -> None:
+    app = make_app(FakeChatClient(tts_fail=True))
+    app.button[0].click().run()
+    answer = app.session_state["messages"][-1]["content"]
+
+    next(button for button in app.button if button.label == "🔊 生成语音").click().run()
+
+    assistant = app.session_state["messages"][-1]
+    assert assistant["content"] == answer
+    assert assistant.get("audio_url") is None
+    assert any("语音生成失败" in item.value for item in app.warning)
+    assert any(button.label == "🔊 生成语音" for button in app.button)

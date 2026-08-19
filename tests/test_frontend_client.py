@@ -94,3 +94,50 @@ def test_frontend_health_rejects_non_object_payload() -> None:
     )
 
     assert ChatApiClient(transport=transport).health() is False
+
+
+def test_frontend_client_generates_tts_and_resolves_audio_url() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={"audio_url": "/audio/test.mp3", "request_id": "tts-request"},
+        )
+
+    client = ChatApiClient(
+        backend_url="http://localhost:8000/",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = client.synthesize("测试回答")
+
+    assert requests[0].url.path == "/api/tts"
+    assert requests[0].content == b'{"text":"\xe6\xb5\x8b\xe8\xaf\x95\xe5\x9b\x9e\xe7\xad\x94"}'
+    assert result.audio_url == "/audio/test.mp3"
+    assert client.resolve_audio_url(result.audio_url) == "http://localhost:8000/audio/test.mp3"
+
+
+def test_frontend_client_keeps_tts_failure_separate_from_chat() -> None:
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            502,
+            json={"detail": "语音生成失败，请稍后重试", "request_id": "tts-error"},
+        )
+    )
+
+    with pytest.raises(FrontendServiceError, match="语音生成失败"):
+        ChatApiClient(transport=transport).synthesize("保留文字回答")
+
+
+def test_frontend_client_rejects_external_audio_url() -> None:
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200,
+            json={"audio_url": "https://example.com/audio.mp3", "request_id": "bad"},
+        )
+    )
+
+    with pytest.raises(FrontendServiceError, match="返回格式异常"):
+        ChatApiClient(transport=transport).synthesize("测试")

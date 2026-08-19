@@ -65,12 +65,24 @@ def render_history() -> None:
                 st.markdown(message["content"])
             if message["role"] == "assistant":
                 render_sources(message.get("sources", []))
-                st.button(
-                    "🔊 语音播放（Phase 8）",
+                if message.get("error"):
+                    continue
+                audio_url = message.get("audio_url")
+                if audio_url:
+                    st.audio(
+                        get_client().resolve_audio_url(audio_url),
+                        format="audio/mpeg",
+                    )
+                    st.caption("语音已生成并保存在本地；页面刷新不会重复生成。")
+                elif st.button(
+                    "🔊 生成语音",
                     key=f"tts-{message['request_id']}",
-                    disabled=True,
-                    help="TTS 将在 Phase 8 实现。",
-                )
+                    help="按需将这条 AI 回答转换为中文语音。",
+                ):
+                    generate_speech(message)
+                    st.rerun()
+                if message.get("tts_error"):
+                    st.warning(message["tts_error"])
 
 
 def latest_assistant_message() -> dict[str, Any] | None:
@@ -121,6 +133,7 @@ def submit_question(client: ChatApiClient, question: str) -> None:
                 "sources": payload["sources"],
                 "request_id": payload["request_id"],
                 "error": not result.success,
+                "audio_url": payload["audio_url"],
             }
         )
     except FrontendServiceError as exc:
@@ -134,6 +147,16 @@ def submit_question(client: ChatApiClient, question: str) -> None:
                 "error": True,
             }
         )
+
+
+def generate_speech(message: dict[str, Any]) -> None:
+    """Generate audio once and keep the result attached to this UI message."""
+    try:
+        payload = get_client().synthesize(message["content"])
+        message["audio_url"] = payload.audio_url
+        message.pop("tts_error", None)
+    except FrontendServiceError as exc:
+        message["tts_error"] = str(exc)
 
 
 def main() -> None:
