@@ -1,9 +1,14 @@
 """Load the offline index and return traceable retrieval sources."""
 
+import logging
+
 from app.agent.schemas import Source
 from app.core.config import Settings, get_settings
 from app.rag.embeddings import EmbeddingProvider, LocalBGEEmbedder
 from app.rag.vector_store import InvalidVectorStoreError, VectorStore
+
+
+logger = logging.getLogger(__name__)
 
 
 class KnowledgeRetriever:
@@ -40,11 +45,18 @@ class KnowledgeRetriever:
             self.embedder.encode_query(normalized), self.settings.rag_top_k
         )
         if not matches:
+            logger.info("RAG retrieval completed top_k=%d matches=0", self.settings.rag_top_k)
             return []
         threshold = self.settings.rag_score_threshold
         if threshold is not None and matches[0][1] < threshold:
+            logger.info(
+                "RAG retrieval completed top_k=%d matches=0 threshold=%s best_score=%.4f",
+                self.settings.rag_top_k,
+                threshold,
+                matches[0][1],
+            )
             return []
-        return [
+        sources = [
             Source(
                 file=chunk.file,
                 page=chunk.page,
@@ -55,3 +67,11 @@ class KnowledgeRetriever:
             for chunk, score in matches
             if threshold is None or score >= threshold
         ]
+        logger.info(
+            "RAG retrieval completed top_k=%d matches=%d files=%s scores=%s",
+            self.settings.rag_top_k,
+            len(sources),
+            ",".join(source.file for source in sources) or "-",
+            ",".join(f"{source.score:.4f}" for source in sources) or "-",
+        )
+        return sources

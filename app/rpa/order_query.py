@@ -170,8 +170,12 @@ async def _run_browser_query(order_no: str) -> dict[str, str | float | None]:
             logger.info("RPA ERP login page opened order_no=%s", order_no)
             await _login(page, settings.mock_erp_username, settings.mock_erp_password)
             logger.info("RPA ERP login succeeded order_no=%s", order_no)
+            logger.info("RPA ERP order search started order_no=%s", order_no)
             await _search_and_open_order(page, order_no)
-            return await _read_order(page)
+            logger.info("RPA ERP order detail opened order_no=%s", order_no)
+            result = await _read_order(page)
+            logger.info("RPA ERP order detail read order_no=%s", order_no)
+            return result
         finally:
             if context is not None:
                 try:

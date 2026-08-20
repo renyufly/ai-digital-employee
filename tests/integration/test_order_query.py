@@ -10,6 +10,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import httpx
+import logging
 import pytest
 
 from app.core.config import get_settings
@@ -88,8 +89,9 @@ def configure_rpa(monkeypatch: pytest.MonkeyPatch, live_mock_erp: str) -> Iterat
     get_settings.cache_clear()
 
 
-def test_query_shipped_order() -> None:
-    result = asyncio.run(query_order("10001"))
+def test_query_shipped_order(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.INFO):
+        result = asyncio.run(query_order("10001"))
 
     assert result.success is True
     assert result.error_code is None
@@ -103,6 +105,12 @@ def test_query_shipped_order() -> None:
         "created_at": "2026-08-17 09:30",
         "shipped_at": "2026-08-18 13:20",
     }
+    assert "RPA ERP login page opened" in caplog.text
+    assert "RPA ERP login succeeded" in caplog.text
+    assert "RPA ERP order search started" in caplog.text
+    assert "RPA ERP order detail opened" in caplog.text
+    assert "RPA ERP order detail read" in caplog.text
+    assert "admin123" not in caplog.text
 
 
 def test_query_processing_and_missing_orders() -> None:

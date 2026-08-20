@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
+import logging
 from typing import Any
 import asyncio
 
@@ -13,6 +14,9 @@ from app.agent.schemas import ToolResult
 from app.rpa.order_query import query_order
 from app.tools.calculator import calculate
 from app.tools.knowledge import search_company_docs
+
+
+logger = logging.getLogger(__name__)
 
 
 class CalculateInput(BaseModel):
@@ -127,6 +131,7 @@ async def dispatch_tool(name: str, arguments: object) -> ToolResult:
     try:
         return await definition.executor(validated)
     except Exception:
+        logger.exception("Tool executor raised an unexpected error tool=%s", name)
         return ToolResult(
             success=False,
             error_code="TOOL_INTERNAL_ERROR",
