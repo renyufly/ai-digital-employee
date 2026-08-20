@@ -833,3 +833,114 @@ $env:HF_HUB_OFFLINE = '1'
 - 已确认边界：音频只保存在 Backend 本地 `data/audio/`，默认保留 24 小时；Streamlit 的 audio_url 复用只存在于当前 UI session，不等于服务端会话持久化。
 - 下一步：严格按照 `plan.md` 进入 Phase 9（测试、日志与演示稳定性），集中增强演示前检查和故障恢复，不在 Phase 8 提前实现 Docker。
 - 尚未开始：Phase 9 演示稳定性增强、Phase 10 Docker、Phase 11 README/简历材料，以及 P2 会话持久化、知识上传和数字人服务。
+
+## Phase 9 - 实现完成，真实稳定模型验收待配置
+
+- 阶段：Phase 9（测试、日志与演示稳定性）
+- 实现状态：代码、分层测试、日志契约和演示前检查工具已完成；默认回归与完整本地集成回归全部通过。
+- 真实验收状态：OpenRouter 网络、鉴权、Models API、tools 能力与 Credits API 检查通过；当前本机 `.env` 使用 `openai/gpt-oss-20b:free` 且可用余额为 0，三个真实问题中前两个通过，综合问题出现不稳定行为，因此尚不能把当前模型配置标记为“面试时稳定能跑”。
+- 完成日期：2026-08-20
+- 累计进度：Phase 0 至 Phase 8 已完整验收；Phase 9 实现和本地自动验收完成，等待将本机 `.env` 切换到 `plan.md` 指定的稳定模型并准备可用额度后，重新执行真实 Demo 验收。
+- 范围控制：本次没有实现 Phase 10 Docker、Phase 11 README/简历材料、会话持久化或知识上传；按任务要求不准备、不检查录屏和截图。
+
+## Phase 9 实施过程
+
+1. 严格以 `plan.md` 的 Phase 9 为执行范围，并参考 `Idea.md` 中“Multi-Step Demo 必须稳定”“日志展示 Tool Call”“先保证代码可运行和测试”的背景要求；没有采用 `Idea.md` 的旧阶段编号，也没有提前进入 Docker。
+2. 先审计 Phase 9 必测清单。原有测试已覆盖订单 `10001`、未发货订单 `10002`、不存在订单、退款政策命中、无关政策拒答、正常计算、除零、恶意表达式、Tool 参数错误、RPA 超时、最大 Agent 步数、综合问题两个工具和来源去重；本阶段补齐了 OpenRouter 超时映射的显式测试。
+3. 增强 Agent 可观测性：每一轮 LLM 调用记录 round、耗时和 Tool Call 数量；每个工具记录名称、成功状态、耗时和错误码；达到最大轮数时记录明确警告。日志不写用户完整问题、完整 prompt、工具参数、API Key 或 Authorization header。
+4. 增强工具异常日志：Tool Registry 捕获未预期执行器异常时使用异常堆栈日志，同时继续向 Agent 返回安全的 `TOOL_INTERNAL_ERROR`，既保留诊断证据，也不把内部异常暴露给用户。
+5. 增强 RPA 页面阶段日志：依次记录打开登录页、登录成功、开始搜索订单、打开订单详情和读取详情完成；自动测试明确断言日志不包含 Mock ERP 密码。
+6. 增强 RAG 检索日志：记录 `top_k`、实际命中数、文件名和相似度分数；无匹配和低于阈值分别记录安全摘要，不记录完整用户查询或命中文本内容。
+7. 创建 `app/core/preflight.py`，把演示检查拆成可单测的非破坏性检查：`.env` 必填项、固定模型 ID、ERP seed、FAISS/metadata/manifest 完整性、索引模型一致性、端口、项目内 Chromium 实际启动、Mock ERP 可访问性、OpenRouter 模型 tools 能力和 Credits 余额。
+8. 创建 `scripts/preflight.py`。`pre-start` 模式用于服务启动前检查 8000/8001/8501 空闲和全部本地/在线依赖；`demo` 模式用于 Mock ERP 启动后依次真实执行三个固定面试问题，并验证所需工具和 RAG Source。
+9. 演示问题检查不仅验证 `error_code`、工具名和来源，还拒绝空回答及“同一字符大量重复”的明显退化回答，避免模型虽然调用工具但输出无意义文本时产生假阳性。
+10. 为排障提供 `--offline`，只跳过 OpenRouter 网络与余额项并明确显示 `SKIP`；正式演示前必须不带该参数运行。检查输出仅显示密钥“已配置”，永远不输出密钥值。
+11. 按计划加入 TTS 降级说明：语音失败时保留文字回答并跳过 TTS，不影响核心 Agent 链路。按本次任务要求，预检明确说明录屏和截图不在检查范围。
+12. 将 `.env.example` 的默认模型从不稳定免费端点恢复为 `plan.md` 指定的 `openai/gpt-5-mini`，并明确不能把免费模型作为唯一演示方案；没有修改本机 `.env`、真实 API Key 或用户当前模型选择。
+13. 创建 `tests/test_preflight.py`，覆盖配置/密钥脱敏、ERP seed、真实小向量索引、OpenRouter Models/Credits Fake HTTP、三个问题只运行一次、必要工具、来源要求和退化回答拒绝。
+14. 创建 `tests/test_observability.py`，覆盖 Agent 轮次与工具日志、耗时、prompt/API Key 不泄漏、RAG top_k/文件/分数日志，以及工具未预期异常保留堆栈。
+15. 完成项目内 uv 环境的定向测试、默认回归、真实本地 BGE/FAISS + Mock ERP + 项目内 Chromium 完整集成回归、Python 编译、uv 依赖兼容性和 Git 补丁格式检查；未安装或修改任何全局 Python、浏览器或系统版本。
+16. 真实联网 `pre-start` 检查确认当前 OpenRouter 模型仍在 Models API 中且声明支持 `tools`，Credits API 返回剩余额度 `0.0000`；由于当前模型以 `:free` 结尾，余额项允许免费端点继续接受请求。
+17. 真实 `demo` 检查中，退款问题成功调用 `search_company_docs` 并返回 1 个来源，订单问题成功调用 `query_order`；综合问题第一次未调用两个必要工具。单独诊断重试时两个工具均执行，但最终回答退化为重复感叹号。该结果证明本地 RAG/RPA 正常，但当前免费模型不满足 Phase 9 的演示稳定性目标，因此如实保留为待办，不以偶发通过冒充完整验收。
+
+## Phase 9 项目内环境与运行命令
+
+所有命令继续使用项目 `.venv/`，uv 缓存和 Python 下载目录仍限制在项目文件夹：
+
+```powershell
+$env:UV_CACHE_DIR = (Join-Path (Get-Location) '.uv-cache')
+$env:UV_PYTHON_INSTALL_DIR = (Join-Path (Get-Location) '.uv-python')
+$env:PLAYWRIGHT_BROWSERS_PATH = (Join-Path (Get-Location) '.playwright-browsers')
+uv pip install --python .venv\Scripts\python.exe -r requirements.txt
+uv pip check --python .venv\Scripts\python.exe
+```
+
+服务启动前执行完整预检；`--offline` 仅用于无网络排障：
+
+```powershell
+.venv\Scripts\python.exe scripts\preflight.py pre-start
+.venv\Scripts\python.exe scripts\preflight.py pre-start --offline
+```
+
+真实 Demo 验收需要先在独立终端启动 Mock ERP，再运行 Demo 模式。自动验收或不希望显示浏览器时使用 headless：
+
+```powershell
+.venv\Scripts\python.exe -m uvicorn mock_erp.app:app --port 8001
+
+$env:RPA_HEADLESS = 'true'
+$env:HF_HUB_OFFLINE = '1'
+.venv\Scripts\python.exe scripts\preflight.py demo
+```
+
+运行 Phase 9 定向、默认和完整本地集成回归：
+
+```powershell
+.venv\Scripts\python.exe -m pytest -q tests\test_preflight.py tests\test_observability.py tests\test_llm_client.py
+.venv\Scripts\python.exe -m pytest -q
+
+$env:PLAYWRIGHT_BROWSERS_PATH = (Join-Path (Get-Location) '.playwright-browsers')
+$env:HF_HUB_OFFLINE = '1'
+.venv\Scripts\python.exe -m pytest -q --run-integration
+```
+
+## Phase 9 验收结果
+
+| 验收项 | 结果 | 证据 |
+| --- | --- | --- |
+| Phase 9 必测业务清单 | 通过 | 订单 10001/10002/不存在、RAG 命中/拒答、Calculator 正常/除零/恶意表达式、参数错误、LLM/RPA 超时、最大步数、双工具、来源去重均有自动测试 |
+| request_id | 通过 | 每个 Chat/TTS 请求继续由中间件生成 UUID，响应体与 `X-Request-ID` 一致，日志格式带 request_id |
+| LLM 轮次与耗时日志 | 通过 | Agent 记录每轮 round/duration/tool_calls；LLM Client 记录请求耗时、模型与 token 数 |
+| 工具名称、状态与耗时日志 | 通过 | Agent 记录 tool/success/duration/error_code；未预期异常记录堆栈 |
+| RPA 页面阶段与密码保护 | 通过 | 完整集成测试断言五个页面阶段均出现，且日志不含 `admin123` |
+| RAG 检索日志 | 通过 | 自动测试断言 top_k、命中文件和 scores 存在，完整查询不进入日志 |
+| 敏感信息保护 | 通过 | 自动测试断言用户问题标记和 API Key 标记不在日志；代码不记录 Authorization 或完整 prompt |
+| 演示前本地检查 | 通过 | seed、4 个向量/4 个 PDF、索引模型、项目内 Chromium 实际启动、8000/8001/8501 空闲均通过 |
+| OpenRouter 网络与能力检查 | 通过 | 真实 Models API/鉴权通过，当前模型声明支持 tools |
+| OpenRouter 余额检查 | 有条件通过 | Credits API 可访问，当前剩余额度为 0；仅因当前模型是 `:free` 才允许继续，稳定付费模型尚无可用额度 |
+| 三个真实示例问题 | 未完整通过 | 前两题通过；综合题在当前免费模型上一次漏调工具，诊断重试又产生重复字符回答 |
+| Phase 9 新增定向测试 | 通过 | `14 passed` |
+| 默认自动测试 | 通过 | `109 passed, 4 skipped`；跳过项仅为显式本地集成测试 |
+| 完整本地集成回归 | 通过 | `113 passed`，真实 BGE/FAISS、临时 Uvicorn Mock ERP、项目内 headless Chromium 全部正常 |
+| uv 环境兼容性 | 通过 | `uv pip check --python .venv\Scripts\python.exe` 检查 99 个包，全部兼容 |
+| Python 编译检查 | 通过 | `python -m compileall -q app frontend mock_erp scripts tests` 成功 |
+| Git 补丁格式检查 | 通过 | `git diff --check` 无空白错误 |
+
+## Phase 9 产物
+
+- 可复用的演示检查逻辑：`app/core/preflight.py`
+- 命令行预启动/真实 Demo 检查：`scripts/preflight.py`
+- Agent 轮次、工具状态与耗时日志：更新后的 `app/agent/service.py`
+- Tool 异常堆栈日志：更新后的 `app/agent/tool_registry.py`
+- RAG top_k、文件和分数日志：更新后的 `app/rag/retriever.py`
+- RPA 页面阶段日志：更新后的 `app/rpa/order_query.py`
+- 稳定模型示例配置：更新后的 `.env.example`
+- 演示检查自动测试：`tests/test_preflight.py`
+- 安全日志自动测试：`tests/test_observability.py`
+- LLM 超时与 RPA 日志断言：更新后的 `tests/test_llm_client.py`、`tests/integration/test_order_query.py`
+
+## 当前进度与下一阶段边界
+
+- 已完成：Phase 9 的代码实现、分层自动测试、日志增强、演示前检查脚本和本地完整集成验收。
+- 待用户配置后复验：在本机 `.env` 将 `LLM_MODEL` 切换为 `openai/gpt-5-mini` 或另一个经过验证的稳定 Tool Calling 模型，并准备可用 OpenRouter 额度；随后重新运行 `scripts/preflight.py pre-start` 与 `scripts/preflight.py demo`，要求三个示例问题一次全部通过。
+- 阶段门槛：在稳定模型真实 Demo 通过前，不把 Phase 9 标记为“完整验收”，也不进入 Phase 10 Docker。
+- 仍未开始：Phase 10 Docker、Phase 11 README/简历材料，以及 P2 会话持久化、知识上传和数字人服务。

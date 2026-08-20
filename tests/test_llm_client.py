@@ -105,3 +105,13 @@ def test_llm_client_maps_removed_model_404_explicitly() -> None:
 
     assert mapped.code == "LLM_MODEL_NOT_FOUND"
     assert "不存在或已下线" in mapped.message
+
+
+def test_llm_client_maps_timeout_explicitly() -> None:
+    request = httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions")
+
+    mapped = LLMClient._map_error(openai.APITimeoutError(request=request))
+
+    assert mapped.code == "LLM_TIMEOUT"
+    assert mapped.retryable is True
+    assert "超时" in mapped.message

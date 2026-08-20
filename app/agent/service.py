@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 import json
+import logging
 from time import perf_counter
 from typing import Any, Protocol
 
@@ -13,6 +14,9 @@ from app.agent.tool_registry import dispatch_tool, tool_schemas
 from app.core.config import Settings, get_settings
 from app.core.errors import LLMRequestError
 from app.llm.client import LLMClient, LLMResponse
+
+
+logger = logging.getLogger(__name__)
 
 
 class LLMGateway(Protocol):
@@ -55,10 +59,25 @@ class AgentService:
 
         for step in range(1, self.settings.max_agent_steps + 1):
             started = perf_counter()
+            logger.info("Agent LLM round started round=%d", step)
             try:
                 response = await self.llm_client.complete(messages, self.schemas)
             except LLMRequestError as exc:
+                logger.warning(
+                    "Agent LLM round failed round=%d duration_ms=%d error_code=%s",
+                    step,
+                    round((perf_counter() - started) * 1000),
+                    exc.code,
+                )
                 return self._error_result(step, exc.code, exc.message, traces, sources)
+
+            llm_duration_ms = round((perf_counter() - started) * 1000)
+            logger.info(
+                "Agent LLM round completed round=%d duration_ms=%d tool_calls=%d",
+                step,
+                llm_duration_ms,
+                len(response.tool_calls),
+            )
 
             traces.append(
                 AgentTrace(
@@ -69,7 +88,7 @@ class AgentService:
                         if response.tool_calls
                         else "模型生成最终回答"
                     ),
-                    duration_ms=round((perf_counter() - started) * 1000),
+                    duration_ms=llm_duration_ms,
                 )
             )
 
@@ -98,6 +117,7 @@ class AgentService:
                 traces.append(
                     AgentTrace(step=step, type="tool_start", name=call.name, summary=f"开始执行 {call.name}")
                 )
+                logger.info("Agent tool started round=%d tool=%s", step, call.name)
                 tool_started = perf_counter()
                 if parse_error:
                     result = ToolResult(
@@ -108,6 +128,14 @@ class AgentService:
                 else:
                     result = await self.dispatcher(call.name, parsed_arguments)
                 duration_ms = round((perf_counter() - tool_started) * 1000)
+                logger.info(
+                    "Agent tool completed round=%d tool=%s success=%s duration_ms=%d error_code=%s",
+                    step,
+                    call.name,
+                    result.success,
+                    duration_ms,
+                    result.error_code or "-",
+                )
                 traces.append(
                     AgentTrace(
                         step=step,
@@ -127,6 +155,9 @@ class AgentService:
                     }
                 )
 
+        logger.warning(
+            "Agent stopped at maximum rounds max_rounds=%d", self.settings.max_agent_steps
+        )
         return self._error_result(
             self.settings.max_agent_steps,
             "MAX_AGENT_STEPS_EXCEEDED",
