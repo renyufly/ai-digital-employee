@@ -942,5 +942,52 @@ $env:HF_HUB_OFFLINE = '1'
 
 - 已完成：Phase 9 的代码实现、分层自动测试、日志增强、演示前检查脚本和本地完整集成验收。
 - 待用户配置后复验：在本机 `.env` 将 `LLM_MODEL` 切换为 `openai/gpt-5-mini` 或另一个经过验证的稳定 Tool Calling 模型，并准备可用 OpenRouter 额度；随后重新运行 `scripts/preflight.py pre-start` 与 `scripts/preflight.py demo`，要求三个示例问题一次全部通过。
-- 阶段门槛：在稳定模型真实 Demo 通过前，不把 Phase 9 标记为“完整验收”，也不进入 Phase 10 Docker。
-- 仍未开始：Phase 10 Docker、Phase 11 README/简历材料，以及 P2 会话持久化、知识上传和数字人服务。
+- 阶段门槛：在稳定模型真实 Demo 通过前，不把 Phase 9 标记为“完整验收”；Phase 10 后续已按用户要求忽略，不再作为进入下一阶段的门槛。
+- 后续状态：Phase 10 Docker 已忽略，Phase 11 README 已完成；P2 会话持久化、知识上传和数字人服务仍未开始。
+
+## Phase 11 - README 已完成
+
+- 阶段：Phase 11（README、简历和面试材料）
+- 实现状态：项目 README 编写完成，并提供中文优先、英文可切换的双语内容。
+- 完成日期：2026-08-20
+- 项目名称：`Nova AI Agent Employee`（仓库代号 `nova-ai-agent-employee`）。
+- 累计进度：Phase 0 至 Phase 8 已完整验收；Phase 9 代码与本地自动验收完成、稳定模型真实三题复验待用户配置；Phase 10 已按本次任务要求忽略；Phase 11 README 已完成。
+- 范围控制：按任务要求忽略演示 GIF/截图和 Docker 运行；没有创建或修改 Dockerfile、Compose、录屏、截图、业务代码、密钥或本机 `.env`。
+
+## Phase 11 实施过程
+
+1. 严格读取 `plan.md` 的 Phase 11 README 最终结构，并以 `Idea.md` 的企业知识库、RPA、Calculator、多工具 Agent、TTS、面试展示和最终验收要求作为项目背景。
+2. 审计现有代码、配置、脚本、API、测试和 Phase 9 记录，确保 README 只描述已经存在的 `search_company_docs`、`query_order`、`calculate`、FastAPI、Streamlit、Edge TTS、预检和测试能力。
+3. 采用英文项目名 `Nova AI Agent Employee`，以简单代号 `Nova` 加 `AI Agent Employee` 表达项目定位；没有继续使用中文名称作为主项目名。
+4. 新建根目录 `README.md`，顶部默认展示中文并提供 `中文（默认） | English` 锚点切换；英文版作为同一文件内的独立章节，便于中英文读者直接定位。
+5. 中文 README 按计划覆盖一句话介绍、核心功能、架构图、技术选型及取舍、三个固定演示问题、本地安装与运行、配置说明、测试命令、已知限制和后续扩展。
+6. 按任务要求省略演示 GIF/截图，不创建占位图片；明确说明演示媒体不属于当前交付，避免读者误以为资源缺失。
+7. 按任务要求忽略 Docker 运行，不编造 Dockerfile 或 Compose 命令；README 明确本地运行是当前正式路径。
+8. 将本地安装写成可执行的 Windows PowerShell 流程：项目内 Python 3.11/uv 环境、依赖安装、项目内 Chromium、`.env`、ERP seed、FAISS 索引、预启动检查，以及 Mock ERP、Backend、Frontend 三终端启动。
+9. 记录正式演示验收命令与三个固定问题，并说明 `pre-start --offline` 只用于排障、`demo` 需要真实 OpenRouter 与运行中的 Mock ERP。
+10. 加入 API 快速调用、关键配置分组、默认/完整本地集成测试、依赖与编译检查，使读者可以按照 README 从零启动和验证项目。
+11. 如实记录当前限制：单轮会话、离线 PDF 索引、模拟 ERP、RPA 浏览器依赖、在线 LLM/TTS 依赖、Phase 9 稳定模型真实复验待配置，以及未实现 Avatar、Docker 和演示媒体。
+12. 添加与实际实现一致的简历描述；没有把未完成的 Docker、会话持久化、知识上传或数字人 Avatar 写成已完成功能。
+13. 在 `plan.md` 的 Phase 10 标题及正文前增加状态说明，明确 Phase 10 已按本次任务要求忽略，只有未来新任务明确恢复时才执行原计划。
+
+## Phase 11 验收结果
+
+| 验收项 | 结果 | 证据 |
+| --- | --- | --- |
+| 英文项目名称 | 通过 | `Nova AI Agent Employee` / `nova-ai-agent-employee` 简短、易记且表达 Agent 员工定位 |
+| 中英文切换 | 通过 | README 顶部与英文区均提供中文优先的锚点导航 |
+| README 计划结构 | 通过 | 覆盖介绍、功能、架构、选型、三题、本地运行、配置、测试、限制和扩展 |
+| 演示媒体范围 | 通过 | 未创建 GIF/截图，README 明确其不在当前交付范围 |
+| Docker 范围 | 通过 | 未创建容器文件或命令，`plan.md` 已注明 Phase 10 被忽略 |
+| 从零启动路径 | 通过 | 包含环境、依赖、Chromium、配置、seed、索引、预检和三服务命令 |
+| 实现一致性 | 通过 | 工具名、API、端口、脚本、模型限制、TTS 降级和当前 Phase 9 状态均与代码/记录一致 |
+| 简历描述真实性 | 通过 | 仅描述已完成的 Agent、RAG、RPA、Calculator、Streamlit、来源和 TTS |
+| 默认自动测试 | 通过 | `109 passed, 4 skipped`；跳过项仅为显式本地集成测试 |
+| Git 补丁格式检查 | 通过 | `git diff --check` 无空白错误 |
+
+## Phase 11 产物与当前进度
+
+- 双语项目说明与运行手册：`README.md`
+- Phase 10 忽略状态：更新后的 `plan.md`
+- Phase 11 实施与验收记录：更新后的 `step.md`
+- 当前结论：Phase 11 的 README 任务已完成；Phase 10 保持忽略。项目代码与本地自动验收状态没有因文档阶段发生变化，Phase 9 的稳定模型真实三题复验仍需用户配置可用模型与额度后执行。
