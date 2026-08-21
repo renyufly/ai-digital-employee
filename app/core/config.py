@@ -1,4 +1,8 @@
 """Environment-backed application configuration."""
+'''
+配置中心：
+集中管理整个项目的配置，从 .env / 环境变量读取参数，并自动做类型和合法性校验
+'''
 
 from functools import lru_cache
 from pathlib import Path
@@ -14,15 +18,16 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        extra="ignore",
-        case_sensitive=False,
+        extra="ignore",  # .env 里多出来的配置忽略
+        case_sensitive=False, # 环境变量大小写不敏感
     )
 
+    # LLM: 
     llm_provider: str = "openrouter"
     openrouter_api_key: str | None = None
     llm_base_url: str = "https://openrouter.ai/api/v1"
     llm_model: str = ""
-    llm_temperature: float = Field(default=0, ge=0, le=2)
+    llm_temperature: float = Field(default=0, ge=0, le=2) # Field() 做参数限制： 0 <= temperature <= 2
     llm_parallel_tool_calls: bool = False
     llm_timeout_seconds: float = Field(default=60, gt=0)
     llm_max_retries: int = Field(default=1, ge=0, le=5)
@@ -31,6 +36,7 @@ class Settings(BaseSettings):
     openrouter_app_title: str = "AI Digital Employee Demo"
     max_agent_steps: int = Field(default=5, ge=1, le=20)
 
+    # RAG：
     embedding_model: str = "BAAI/bge-small-zh-v1.5"
     embedding_cache_dir: Path = Path("./.model-cache")
     knowledge_dir: Path = Path("./knowledge")
@@ -59,6 +65,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_chunk_window(self) -> "Settings":
+        ''' RAG 跨字段校验'''
         if self.chunk_overlap >= self.chunk_size:
             raise ValueError("CHUNK_OVERLAP must be smaller than CHUNK_SIZE")
         return self
@@ -66,11 +73,15 @@ class Settings(BaseSettings):
     @field_validator("rag_score_threshold", mode="before")
     @classmethod
     def parse_optional_score_threshold(cls, value: object) -> object:
+        ''' 专门处理 把空字符串转换成 None'''
         if value == "":
             return None
         return value
 
     def require_llm_api_key(self) -> str:
+        '''
+        真正调用 LLM 时才检查 Key
+        '''
         """Return the API key only when an LLM operation actually needs it."""
         if not self.openrouter_api_key or not self.openrouter_api_key.strip():
             raise ValueError("OPENROUTER_API_KEY is required for LLM operations")
@@ -79,5 +90,6 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
+    ''' 配置只加载一次，然后全局复用 '''
     """Load and validate settings once per process."""
     return Settings()
