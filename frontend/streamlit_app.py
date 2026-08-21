@@ -1,4 +1,13 @@
 """Streamlit UI for the AI digital employee demo."""
+'''
+整个项目的 Streamlit 前端页面。它不负责 Agent、RAG、RPA 的具体实现，
+只负责：收集用户问题 → 调 FastAPI 后端 → 展示回答、来源、执行轨迹和 TTS 音频
+'''
+'''
+只负责 UI 状态管理和结果展示，
+真正的 Agent、RAG 和 Playwright RPA 全部在后端，
+前端通过 HTTP API 与后端解耦.
+'''
 
 from __future__ import annotations
 
@@ -10,7 +19,7 @@ import streamlit as st
 
 from frontend.client import ChatApiClient, FrontendServiceError
 
-
+# 提前准备的 3 个演示问题
 EXAMPLE_QUESTIONS = (
     "公司的退款政策是什么？",
     "帮我查询订单 10001。",
@@ -22,7 +31,12 @@ EXAMPLE_QUESTIONS = (
 
 
 def get_client() -> ChatApiClient:
+    '''
+    创建访问 FastAPI 的 HTTP 客户端，并保存在 session_state 中，
+    避免 Streamlit 每次刷新页面都重新创建.
+    '''
     """Keep the HTTP dependency replaceable in Streamlit's session for UI tests."""
+
     if "chat_client" not in st.session_state:
         st.session_state.chat_client = ChatApiClient(
             os.getenv("BACKEND_URL", "http://localhost:8000")
@@ -31,11 +45,20 @@ def get_client() -> ChatApiClient:
 
 
 def initialize_state() -> None:
+    '''
+    初始化页面状态:
+    messages：保存当前网页里的聊天记录.
+    ui_session_id：给当前 UI 会话一个唯一 ID.
+    注意：当前项目的 session_id 还没有真正的服务端聊天记忆，所以 UI 有历史 ≠ Agent 有上下文记忆
+    '''
     st.session_state.setdefault("messages", [])
     st.session_state.setdefault("ui_session_id", str(uuid4()))
 
 
 def render_sources(sources: list[dict[str, Any]]) -> None:
+    '''
+    展示 RAG 来源, 让回答可追踪
+    '''
     if not sources:
         return
     with st.expander(f"参考来源（{len(sources)}）", expanded=False):
@@ -53,6 +76,9 @@ def render_sources(sources: list[dict[str, Any]]) -> None:
 
 
 def render_history() -> None:
+    '''
+    渲染聊天记录
+    '''
     if not st.session_state.messages:
         st.info("请选择示例问题，或在下方输入一个业务问题。")
         return
@@ -86,6 +112,10 @@ def render_history() -> None:
 
 
 def latest_assistant_message() -> dict[str, Any] | None:
+    '''
+    从聊天历史倒着找, 找到最近一次 AI 回答.
+    主要是给右侧的 Agent Trace 面板使用
+    '''
     for message in reversed(st.session_state.messages):
         if message["role"] == "assistant":
             return message
@@ -93,6 +123,10 @@ def latest_assistant_message() -> dict[str, Any] | None:
 
 
 def render_trace_panel() -> None:
+    '''
+    展示 Agent 执行过程: 可解释 Agent UI
+    '''
+
     st.subheader("Agent 执行轨迹")
     latest = latest_assistant_message()
     if latest is None:
@@ -120,6 +154,9 @@ def render_trace_panel() -> None:
 
 
 def submit_question(client: ChatApiClient, question: str) -> None:
+    '''
+    发送用户问题
+    '''
     """Append both sides of one UI turn; backend still receives only this question."""
     st.session_state.messages.append({"role": "user", "content": question})
     try:
@@ -150,6 +187,9 @@ def submit_question(client: ChatApiClient, question: str) -> None:
 
 
 def generate_speech(message: dict[str, Any]) -> None:
+    '''
+    调用 TTS
+    '''
     """Generate audio once and keep the result attached to this UI message."""
     try:
         payload = get_client().synthesize(message["content"])
@@ -160,6 +200,9 @@ def generate_speech(message: dict[str, Any]) -> None:
 
 
 def main() -> None:
+    '''
+    整个页面入口
+    '''
     st.set_page_config(
         page_title="AI 数字员工",
         page_icon="🤖",
