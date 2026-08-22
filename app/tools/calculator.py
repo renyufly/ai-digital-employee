@@ -1,5 +1,8 @@
 """A deliberately small arithmetic evaluator built on an AST allowlist."""
-
+'''
+实现了一个安全的计算器 Tool：只允许基本数学运算，
+避免直接使用 eval() 带来的代码执行风险
+'''
 from __future__ import annotations
 
 import ast
@@ -9,13 +12,14 @@ from collections.abc import Callable
 
 from app.agent.schemas import ToolResult
 
-
+# 限制输入规模
 _MAX_EXPRESSION_LENGTH = 200
 _MAX_AST_NODES = 64
 _MAX_NUMBER_ABS = 1_000_000_000_000
 _MAX_RESULT_ABS = 1_000_000_000_000_000
 _MAX_POWER_EXPONENT_ABS = 10
 
+''' 白名单控制允许的运算 '''
 _BINARY_OPERATORS: dict[type[ast.operator], Callable[[int | float, int | float], int | float]] = {
     ast.Add: operator.add,
     ast.Sub: operator.sub,
@@ -34,6 +38,8 @@ class _CalculationFailure(Exception):
 
 
 def _validate_number(value: object, *, limit: int, label: str) -> int | float:
+    ''' 防止超大整数、inf、超大计算结果等造成资源问题 '''
+    
     if type(value) not in (int, float):
         raise _CalculationFailure("只允许使用普通整数或小数")
     # Check arbitrary-size integers before converting through math.isfinite,
@@ -50,6 +56,8 @@ def _validate_number(value: object, *, limit: int, label: str) -> int | float:
 
 
 def _evaluate_node(node: ast.AST) -> int | float:
+    ''' 递归计算 AST '''
+
     if isinstance(node, ast.Expression):
         return _evaluate_node(node.body)
 

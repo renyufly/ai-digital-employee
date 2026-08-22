@@ -1,3 +1,7 @@
+'''
+AgentService 的单元测试，核心目的是：不用真实 LLM、RAG、ERP，
+就验证 Agent Loop 在各种情况下是否按预期工作
+'''
 from collections import deque
 from typing import Any
 
@@ -11,6 +15,10 @@ from app.llm.client import LLMResponse, LLMToolCall
 
 
 def make_settings(**overrides: Any) -> Settings:
+    '''
+    生成测试专用配置，例如模型名、最大 Agent 步数。
+    overrides 可以临时覆盖，比如测试最大步数时改成 2
+    '''
     values = {
         "openrouter_api_key": "test-key",
         "llm_model": "openai/gpt-oss-20b:free",
@@ -21,6 +29,9 @@ def make_settings(**overrides: Any) -> Settings:
 
 
 class FakeLLM:
+    '''
+    假的 LLM。它不会真的访问 OpenRouter
+    '''
     def __init__(self, responses: list[LLMResponse]) -> None:
         self.responses = deque(responses)
         self.requests: list[list[dict[str, Any]]] = []
@@ -33,6 +44,9 @@ class FakeLLM:
 
 
 def tool_call(call_id: str, name: str, arguments: str) -> LLMResponse:
+    '''
+    快速模拟模型返回 Tool Call
+    '''
     return LLMResponse(
         content=None,
         tool_calls=[LLMToolCall(id=call_id, name=name, arguments=arguments)],
@@ -42,6 +56,9 @@ def tool_call(call_id: str, name: str, arguments: str) -> LLMResponse:
 
 @pytest.mark.asyncio
 async def test_agent_returns_direct_answer_without_tool() -> None:
+    '''
+    测试：不调用工具，直接回答
+    '''
     fake = FakeLLM([LLMResponse(content="你好，我可以帮你查询。")])
     called = False
 
@@ -59,6 +76,9 @@ async def test_agent_returns_direct_answer_without_tool() -> None:
 
 @pytest.mark.asyncio
 async def test_agent_executes_single_tool_and_preserves_protocol_messages() -> None:
+    '''
+    单工具调用
+    '''
     fake = FakeLLM(
         [
             tool_call("call-1", "query_order", '{"order_no":"10001"}'),
@@ -86,6 +106,9 @@ async def test_agent_executes_single_tool_and_preserves_protocol_messages() -> N
 
 @pytest.mark.asyncio
 async def test_agent_executes_conditional_multi_tool_and_deduplicates_sources() -> None:
+    '''
+    多工具调用 + 来源去重
+    '''
     source = Source(
         file="refund_policy.pdf",
         page=1,
@@ -118,6 +141,9 @@ async def test_agent_executes_conditional_multi_tool_and_deduplicates_sources() 
 
 @pytest.mark.asyncio
 async def test_invalid_tool_json_is_returned_to_model_as_tool_error() -> None:
+    '''
+    模型返回非法 JSON
+    '''
     fake = FakeLLM(
         [
             tool_call("bad-1", "calculate", "not-json"),
@@ -140,6 +166,9 @@ async def test_invalid_tool_json_is_returned_to_model_as_tool_error() -> None:
 
 @pytest.mark.asyncio
 async def test_repeated_tool_call_stops_loop() -> None:
+    '''
+    防止重复 Tool Call 死循环
+    '''
     fake = FakeLLM(
         [
             tool_call("call-1", "query_order", '{"order_no":"10001"}'),
@@ -158,6 +187,9 @@ async def test_repeated_tool_call_stops_loop() -> None:
 
 @pytest.mark.asyncio
 async def test_max_agent_steps_returns_understandable_error() -> None:
+    '''
+    最大 Agent 步数
+    '''
     fake = FakeLLM(
         [
             tool_call("call-1", "calculate", '{"expression":"1+1"}'),
@@ -178,6 +210,9 @@ async def test_max_agent_steps_returns_understandable_error() -> None:
 
 @pytest.mark.asyncio
 async def test_unknown_tool_is_safely_dispatched_and_model_can_explain() -> None:
+    '''
+    未知工具
+    '''
     fake = FakeLLM(
         [
             tool_call("call-1", "delete_database", "{}"),
@@ -197,6 +232,9 @@ async def test_unknown_tool_is_safely_dispatched_and_model_can_explain() -> None
 
 @pytest.mark.asyncio
 async def test_empty_final_answer_returns_explicit_error() -> None:
+    '''
+    最终答案为空
+    '''
     result = await AgentService(
         FakeLLM([LLMResponse(content="   ")]), settings=make_settings()
     ).run("你好")
@@ -207,6 +245,9 @@ async def test_empty_final_answer_returns_explicit_error() -> None:
 
 @pytest.mark.asyncio
 async def test_llm_request_error_becomes_agent_error_result() -> None:
+    '''
+    LLM 本身请求失败
+    '''
     class FailingLLM:
         async def complete(
             self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
