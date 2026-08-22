@@ -1,5 +1,9 @@
 """FastAPI entry point for the AI digital employee."""
-
+'''
+整个 FastAPI 后端的入口文件，主要负责：
+启动应用、注册路由、统一请求 ID、统一异常处理、提供健康检查和静态音频访问。
+这也是项目 Backend 8000 端口的核心入口
+'''
 from contextlib import asynccontextmanager
 import logging
 from uuid import uuid4
@@ -22,7 +26,9 @@ from app.tts.service import cleanup_expired_audio
 class HealthResponse(BaseModel):
     status: str
 
-
+'''
+初始化配置和日志
+'''
 settings = get_settings()
 configure_logging(settings.log_level)
 logger = logging.getLogger(__name__)
@@ -32,19 +38,28 @@ settings.audio_dir.mkdir(parents=True, exist_ok=True)
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    '''
+    启动时清理旧音频
+    '''
     removed = cleanup_expired_audio(settings.audio_dir, settings.audio_retention_hours)
     logger.info("Audio startup cleanup completed removed=%d", removed)
     yield
 
-
+'''
+创建 FastAPI 并注册功能
+'''
 app = FastAPI(title="AI Digital Employee", version="0.1.0", lifespan=lifespan)
-app.include_router(chat_router)
-app.include_router(tts_router)
+app.include_router(chat_router) # AI 对话接口
+app.include_router(tts_router)  # 语音生成接口
 app.mount("/audio", StaticFiles(directory=settings.audio_dir), name="audio")
 
 
 @app.middleware("http")
 async def add_request_id(request: Request, call_next) -> Response:
+    '''
+    每次 HTTP 请求生成一个 UUID.
+    方便排查问题：用户某次请求出错，可根据 Request ID 把这一整条调用链的日志找出来
+    '''
     request_id = str(uuid4())
     request.state.request_id = request_id
     token = set_request_id(request_id)
@@ -57,6 +72,9 @@ async def add_request_id(request: Request, call_next) -> Response:
 
 
 def _error_response(request: Request, status_code: int, message: str) -> JSONResponse:
+    '''
+    统一构造错误响应
+    '''
     request_id = getattr(request.state, "request_id", str(uuid4()))
     response = ChatResponse(
         answer=message,
@@ -72,6 +90,9 @@ def _error_response(request: Request, status_code: int, message: str) -> JSONRes
 async def request_validation_error_handler(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse:
+    '''
+    全局异常处理
+    '''
     logger.info(
         "Request validation failed path=%s error_count=%d",
         request.url.path,
@@ -110,4 +131,7 @@ async def unexpected_error_handler(request: Request, exc: Exception) -> JSONResp
 
 @app.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
+    '''
+    Health检测：检查 Backend 是否正常运行
+    '''
     return HealthResponse(status="ok")

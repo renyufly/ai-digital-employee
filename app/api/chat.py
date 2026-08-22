@@ -1,4 +1,8 @@
 """Stable HTTP contract for the single-turn Agent chat endpoint."""
+'''
+FastAPI 的 /api/chat 接口层。
+它负责接收前端问题 → 校验参数 → 调用 Agent → 把 Agent 结果转换成标准 HTTP 响应
+'''
 
 from __future__ import annotations
 
@@ -15,6 +19,8 @@ from app.agent.service import AgentService
 
 
 logger = logging.getLogger(__name__)
+
+# 定义接口地址
 router = APIRouter(prefix="/api", tags=["chat"])
 
 MAX_CHAT_MESSAGE_LENGTH = 2_000
@@ -22,6 +28,9 @@ MAX_SESSION_ID_LENGTH = 128
 
 
 class ChatRequest(BaseModel):
+    '''
+    规定前端必须怎么传数据
+    '''
     """One independent question; session_id is reserved for a later phase."""
 
     model_config = ConfigDict(
@@ -73,22 +82,31 @@ class ChatRequest(BaseModel):
 
 
 class ChatResponse(BaseModel):
+    '''
+    规定后端统一返回什么.
+    '''
     """JSON-safe response shared by successful and expected-error calls."""
 
     answer: str
     traces: list[AgentTrace] = Field(default_factory=list)
     sources: list[Source] = Field(default_factory=list)
     audio_url: str | None = None
-    request_id: str
+    request_id: str   # 本次请求唯一 ID，方便查日志
 
 
 @lru_cache
 def get_agent_service() -> AgentService:
+    '''
+    lru_cache 使 AgentService() 不会每次请求都重新创建，而是复用同一个实例
+    '''
     """Reuse the stateless service while keeping it replaceable in API tests."""
     return AgentService()
 
 
 def chat_response_from_result(result: AgentResult, request_id: str) -> ChatResponse:
+    '''
+    把 Agent 内部结果转换成 HTTP API 对外统一的数据格式
+    '''
     return ChatResponse(
         answer=result.answer,
         traces=result.traces,
@@ -99,7 +117,12 @@ def chat_response_from_result(result: AgentResult, request_id: str) -> ChatRespo
 
 
 def status_for_agent_result(result: AgentResult) -> int:
+    '''
+    业务错误 → HTTP 状态码.
+    告诉客户端具体属于哪一类错误
+    '''
     """Map expected Agent failures without turning them into opaque HTTP 500s."""
+
     if result.error_code is None:
         return 200
     if result.error_code == "INVALID_ARGUMENT":
@@ -126,7 +149,11 @@ def status_for_agent_result(result: AgentResult) -> int:
         return 503
     return 422
 
-
+'''
+注册接口: POST /api/chat.
+responses={...}：声明可能出现的错误响应
+summary: Swagger 中显示的接口标题
+'''
 @router.post(
     "/chat",
     response_model=ChatResponse,
@@ -149,12 +176,24 @@ async def chat(
     request: Request,
     agent_service: Annotated[AgentService, Depends(get_agent_service)],
 ) -> ChatResponse | JSONResponse:
+    '''
+    真正处理请求.
+    payload: 用户提交的数据
+    request: 当前 FastAPI HTTP 请求对象
+    agent_service: FastAPI 自动注入的 AgentService
+    '''
+
     request_id = request.state.request_id
+
+    '''
+    记录请求开始日志: 没有记录完整用户问题, 兼顾调试和隐私
+    '''
     logger.info(
         "Chat request started message_length=%d has_session_id=%s",
         len(payload.message),
         payload.session_id is not None,
     )
+    
     result = await agent_service.run(payload.message)
     for trace in result.traces:
         logger.info(

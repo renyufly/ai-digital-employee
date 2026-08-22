@@ -1,4 +1,9 @@
 """Query the legacy-style Mock ERP exclusively through its web interface."""
+'''
+用 Playwright 模拟真人操作浏览器，登录 Mock ERP，
+搜索订单并读取订单详情，然后统一包装成 ToolResult 返回给 Agent。 
+它刻意不直接查 SQLite，而是通过网页完成 RPA
+'''
 
 from __future__ import annotations
 
@@ -27,6 +32,9 @@ _MAX_ORDER_NO_LENGTH = 32
 
 
 class _RpaFailure(Exception):
+    '''
+    项目自己定义的 RPA 业务异常
+    '''
     def __init__(self, error_code: str, message: str) -> None:
         super().__init__(message)
         self.error_code = error_code
@@ -34,6 +42,9 @@ class _RpaFailure(Exception):
 
 
 def _validate_order_no(order_no: str) -> str:
+    '''
+    检查订单号是否合法
+    '''
     if not isinstance(order_no, str):
         raise _RpaFailure("INVALID_ARGUMENT", "订单号必须是字符串")
     normalized = order_no.strip()
@@ -47,6 +58,9 @@ def _validate_order_no(order_no: str) -> str:
 
 
 async def _require_visible(page: Page, test_id: str, stage: str) -> None:
+    '''
+    检查某个网页元素是不是已经出现并且可见
+    '''
     try:
         await page.get_by_test_id(test_id).wait_for(state="visible")
     except PlaywrightTimeoutError as exc:
@@ -56,6 +70,12 @@ async def _require_visible(page: Page, test_id: str, stage: str) -> None:
 
 
 async def _require_attached(page: Page, test_id: str, stage: str) -> None:
+    '''
+    元素存在于 DOM 中就行，不要求视觉上可见.
+    因为：shipping_company, tracking_number ,shipped_at 
+    对于“处理中”的订单可能是空字符串。所以只需要确认：这个字段还存在
+    '''
+
     try:
         await page.get_by_test_id(test_id).wait_for(state="attached")
     except PlaywrightTimeoutError as exc:
@@ -65,6 +85,9 @@ async def _require_attached(page: Page, test_id: str, stage: str) -> None:
 
 
 async def _open_login(page: Page, login_url: str, timeout_ms: int) -> None:
+    '''
+    打开 ERP 登录页面
+    '''
     try:
         response = await page.goto(
             login_url, wait_until="domcontentloaded", timeout=timeout_ms
@@ -78,6 +101,10 @@ async def _open_login(page: Page, login_url: str, timeout_ms: int) -> None:
 
 
 async def _login(page: Page, username: str, password: str) -> None:
+    '''
+    完整的自动登录流程
+    '''
+
     await _require_visible(page, "username", "用户名输入框")
     await _require_visible(page, "password", "密码输入框")
     await _require_visible(page, "login-submit", "登录按钮")
@@ -95,10 +122,14 @@ async def _login(page: Page, username: str, password: str) -> None:
 
 
 async def _search_and_open_order(page: Page, order_no: str) -> None:
+    '''
+    搜索订单
+    '''
+
     await _require_visible(page, "order-search", "订单搜索框")
     await _require_visible(page, "order-search-submit", "订单查询按钮")
     await page.get_by_test_id("order-search").fill(order_no)
-    await page.get_by_test_id("order-search-submit").click()
+    await page.get_by_test_id("order-search-submit").click()  # 点击查询
     await page.wait_for_load_state("domcontentloaded")
 
     if await page.get_by_test_id("order-message").is_visible():
@@ -117,6 +148,9 @@ async def _search_and_open_order(page: Page, order_no: str) -> None:
 
 
 async def _read_order(page: Page) -> dict[str, str | float | None]:
+    '''
+    真正读取订单数据
+    '''
     field_ids = {
         "order_no": "order-no",
         "customer_name": "customer-name",
@@ -153,6 +187,10 @@ async def _read_order(page: Page) -> dict[str, str | float | None]:
 
 
 async def _run_browser_query(order_no: str) -> dict[str, str | float | None]:
+    '''
+    整个浏览器 RPA 的核心编排函数
+    '''
+
     settings = get_settings()
     browser_path = settings.playwright_browsers_path.resolve()
     os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(browser_path))
@@ -162,10 +200,17 @@ async def _run_browser_query(order_no: str) -> dict[str, str | float | None]:
 
     async with async_playwright() as playwright:
         try:
+            '''
+            browser: Chromium 浏览器
+            context: 独立浏览器会话
+            page: 一个网页标签页
+            '''
             browser = await playwright.chromium.launch(headless=settings.rpa_headless)
             context = await browser.new_context()
-            page = await context.new_page()
+            page = await context.new_page()  
+
             page.set_default_timeout(settings.rpa_timeout_ms)
+
             await _open_login(page, login_url, settings.rpa_timeout_ms)
             logger.info("RPA ERP login page opened order_no=%s", order_no)
             await _login(page, settings.mock_erp_username, settings.mock_erp_password)
@@ -175,8 +220,13 @@ async def _run_browser_query(order_no: str) -> dict[str, str | float | None]:
             logger.info("RPA ERP order detail opened order_no=%s", order_no)
             result = await _read_order(page)
             logger.info("RPA ERP order detail read order_no=%s", order_no)
+
             return result
+        
         finally:
+            '''
+            最后都会尽量关闭浏览器
+            '''
             if context is not None:
                 try:
                     await context.close()
@@ -190,6 +240,9 @@ async def _run_browser_query(order_no: str) -> dict[str, str | float | None]:
 
 
 async def query_order(order_no: str) -> ToolResult:
+    '''
+    真正给 Agent 使用的公开入口
+    '''
     """Log in and query one order through a fresh Playwright browser session."""
     started_at = perf_counter()
     normalized_order_no = "<invalid>"
@@ -206,7 +259,11 @@ async def query_order(order_no: str) -> ToolResult:
             duration_ms,
         )
         return ToolResult(success=True, data=data, message="订单查询成功")
+
     except _RpaFailure as exc:
+        '''
+        已经预料到的业务错误
+        '''
         logger.warning(
             "RPA order query failed order_no=%s error_code=%s message=%s",
             normalized_order_no,
@@ -214,7 +271,11 @@ async def query_order(order_no: str) -> ToolResult:
             exc.message,
         )
         return ToolResult(success=False, error_code=exc.error_code, message=exc.message)
+
     except PlaywrightTimeoutError:
+        '''
+        浏览器操作超时
+        '''
         logger.exception("RPA operation timed out order_no=%s", normalized_order_no)
         return ToolResult(success=False, error_code="RPA_TIMEOUT", message="ERP 页面操作超时")
     except PlaywrightError:
